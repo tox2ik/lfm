@@ -6,20 +6,18 @@ License: BSD Simplified (See LICENSE for details)
 Version: 0.0.1
 URL: https://github.com/tox2ik/lfm
 
-
 Installation
 ============
+
 Install Perl. Fetch the lfm.pl script from the above url. Chances are you 
 already have it. Invoke the script either directly or with the interpreter
 to see a description of the options.
 
-
 Features
 ========
+
 This section describes briefly the features that are added or removed to or 
 from the lfm.pl script.
-
-
 
 0.0.1
 -----
@@ -29,3 +27,8 @@ from the lfm.pl script.
 		as a measue of convinience or by supplying the artist, song and 
 		playlist manually. 
 
+
+Acknowledgements
+================
+Inspired by lfmCMD.pl is a generic last.fm webservices client for Windows, 
+Linux, OS X. See http://www.easyclasspage.de/lastfm/
