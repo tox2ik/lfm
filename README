@@ -1,0 +1,31 @@
+lfm - CLI to Last.fm (playlists, tagging, charts)
+=================================================
+
+Copyright (C) 2011-2011 Jaroslav Rakhmatoullin
+License: BSD Simplified (See LICENSE for details)
+Version: 0.0.1
+URL: https://github.com/tox2ik/lfm
+
+
+Installation
+============
+Install Perl. Fetch the lfm.pl script from the above url. Chances are you 
+already have it. Invoke the script either directly or with the interpreter
+to see a description of the options.
+
+
+Features
+========
+This section describes briefly the features that are added or removed to or 
+from the lfm.pl script.
+
+
+
+0.0.1
+-----
+	* list a user's playlists 
+	* list recently scrobbles tracks (including `currently playing')
+	* add a song to a playlist using output from the two previous features
+		as a measue of convinience or by supplying the artist, song and 
+		playlist manually. 
+
