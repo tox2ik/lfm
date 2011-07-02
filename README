@@ -21,14 +21,14 @@ from the lfm.pl script.
 
 0.0.1
 -----
-	* list a user's playlists 
-	* list recently scrobbles tracks (including `currently playing')
-	* add a song to a playlist using output from the two previous features
-		as a measue of convinience or by supplying the artist, song and 
-		playlist manually. 
+* list a user's playlists 
+* list recently scrobbles tracks (including `currently playing')
+* add a song to a playlist using output from the two previous features
+  as a measue of convinience or by supplying the artist, song and 
+  playlist manually. 
 
 
 Acknowledgements
 ================
-Inspired by lfmCMD.pl is a generic last.fm webservices client for Windows, 
-Linux, OS X. See http://www.easyclasspage.de/lastfm/
+Inspired by lfmCMD.pl which is a generic last.fm webservices client for 
+Windows, Linux, OS X. See http://www.easyclasspage.de/lastfm/
