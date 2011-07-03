@@ -39,18 +39,16 @@ use constant WIDTH_SONG		=> 23;
 
 
 
-my $httpTimeout		= 15;
+my $httpTimeout			= 15;
 my $terminal_encoding	= 'utf8';
-my %servargs		= ();
-my	$ua 		= LWP::UserAgent->new;
-	$ua->agent('mpclast/0.1');
-	$ua->timeout($httpTimeout);
-my $audioscrobbler	= URI->new($service);
+my %servargs			= ();
+   $servargs{api_key} 	= $apikey;
+my	$ua 				= LWP::UserAgent->new;
+	$ua->timeout(
+		$httpTimeout);
+my $audioscrobbler		= URI->new($service);
 
-my $xs 			= new XML::Simple(
-						KeyAttr => [ ],
-					);
-
+#my $xs					= new XML::Simple( KeyAttr => [ ],);
 
 my $OPT_limit			= 14;
 my $OPT_sort_reverse 	= 0;
@@ -60,9 +58,8 @@ my $OPT_artist			= "";
 my $OPT_track			= "";
 my $OPT_pid				= 0;
 my $OPT_tid				= 0;
-
-
-$servargs{api_key} = $apikey;
+my $OPT_description		= "";
+my $OPT_name			= "";
 
 
 
@@ -78,122 +75,261 @@ parseArguments();
 ## FEEL FREE TO EDIT BELOW THIS LINE
 ##
 
+# TODO generalize argument checking and input validation
+
 sub parseArguments {
-	my %valid = (
-		p => \&listPlaylists, 
-		playlists => \&listPlaylists, 
-
-		t => \&listRecentScrobbles,
-		recent => \&listRecentScrobbles,
-		
-		a => { 	long => \&addTrackToPlaylist, 
-				short=> \&addTrackToPlaylistById,},
-		add => {long => \&addTrackToPlaylist, 
-				short=> \&addTrackToPlaylistById,},
+	my $argc = @ARGV;
+	my %cmds = (
+		add 		=> { long 	=> \&playlist_addTrack, 
+						 short 	=> \&addTrackToPlaylistById,},
+		create 		=> \&createPlaylist, 
+		love		=> { long	=> \&trackLove,
+						 short	=> \&trackLoveById,
+						 long_r => \&trackUnLove,
+						 short_r=> \&trackUnLoveById, },
+		playlists	=> \&listPlaylists, 
+		tracks		=> \&listRecentScrobbles,
 	);
-	my $command = shift @ARGV || printHelp();
+	my %cmd_s2l = (
+		a => 'add',
+		c => 'create',
+		l => 'love',
+		p => 'playlists',
+		t => 'tracks',
+	);
 
-	my $playlists = $command eq "p" || $command eq "playlists";
-	my $tracks = $command eq "t" || $command eq "tracks";
-	my $add = $command eq "a" || $command eq "add";
+	$cmds{a} = \$cmds{$cmd_s2l{a}};
+	$cmds{c} = \$cmds{$cmd_s2l{c}};
+	$cmds{l} = \$cmds{$cmd_s2l{l}};
+	$cmds{p} = \$cmds{$cmd_s2l{p}};
+	$cmds{t} = \$cmds{$cmd_s2l{t}};
 
-	my $i = $#{ARGV};
-	while ($i>=0) {
-		#print "i: $i\n";
-		$a = $ARGV[0]; shift @ARGV; $i--;
-		#print "a: $a\n";
+	# any - anything goes
+	# int - integers
+	# []  - list of possible values
+	my %args = (
+	 '-a' => { add=>'any', love=>'any',  }, 
+	 '-d' => { create=>'any' }, 
+	 '-l' => { playlists=>'int', tracks=>'int' }, 
+	 '-n' => { create=>'any' }, 
+	 '-p' => { add=>'int'}, 
+	'--p' => { add=>'any'}, 
+	 '-r' => { love=>'', playlists=>'', tracks=>''  }, 
+	 '-s' => { playlists=>['id','track'], track=>['id','track','artist'] }, 
+	 '-t' => { add=>'int', 	love=>'int' },
+	'--t' => { add=>'any', 	love=>'any' },
+	);
 
-		if ($a eq "-s") {
-			$i--;
-			my $b = shift @ARGV || printHelp("Bad arguments, -s needs a value"); 
+	my %givenArgs = ();
+	my $consumed = 0;
+	my $cmd = $ARGV[0] || '^$'; 
+	   $cmd = $cmd_s2l{$cmd} || $cmd;
+	print "cmd: $cmd \n";
 
-			if 		($playlists) {
-
-				if		($b eq "id")   {$OPT_plist_order=\&sortPlaylistById;} 
-				elsif	($b eq "track"){$OPT_plist_order=\&sortPlaylistByTitle;}
-				else { printHelp("Bad -s option for command $command"); }
-
-			} elsif ($tracks) {
-
-				if		($b eq "id")   {$OPT_tracks_order=\&sortTracksByDate;} 
-				elsif	($b eq "track"){$OPT_tracks_order=\&sortTracksByTitle;}
-				elsif  ($b eq "artist"){$OPT_tracks_order=\&sortTracksByArtist;}
-				else { printHelp("Bad -s option for command $command"); }
-			}
-		} elsif ($a eq "-p") {		$i--;
-			my $b = shift @ARGV 	|| printHelp("Bad arguments, -p needs a value, see the playlists command"); 
-			$OPT_pid = $b;
-		} elsif ($a eq "-t") {		$i--;
-			my $b = shift @ARGV 	|| printHelp("Bad arguments, -t needs a value, see the tracks command"); 
-			$OPT_tid = int $b;
-		} elsif ($a eq "-track") {	$i--;
-			my $b = shift @ARGV 	|| printHelp("Bad arguments, -track needs a value"); 
-			$OPT_track = $b;
-		} elsif ($a eq "-artist") {	$i--;
-			my $b = shift @ARGV 	|| printHelp("Bad arguments, -artist needs a value"); 
-			$OPT_artist = $b;
-
-		} elsif ($a eq "-l") {		$i--;
-			my $val = shift @ARGV 	|| printHelp("Bad -l value ") ; 
-			$OPT_limit = int $val; 
-			$OPT_limit > 0 || printHelp("Bad -l value");
-		} elsif ($a eq "-r") { 
-			$OPT_sort_reverse = 1;
-		}
-
-
+	unless (grep {/^$cmd$/} (keys %cmds)) {
+		printHelp("command is one of: @{[sort keys %cmds]}");
 	}
 
-	foreach (keys %valid){
-		if ($_ eq $command) {
-			if ($add && $OPT_tid != 0) {
-				$valid{$command}{short}->($OPT_tid, $OPT_pid);
-			} elsif ($add) {
-				$valid{$command}{long}->($OPT_track, $OPT_artist, $OPT_pid);
-			} else {
-				$valid{$command}->();
+	sub invalid($$){ printHelp("$_[0] does not take $_[1]"); }
+
+	print "args: $argc \n ";
+	while ($argc > 1) {
+		$a = splice @ARGV, 1, 1;
+		$argc--;
+		print "a: $a \n";
+		#
+		# general strategy: 
+		#  check that -arg is in %args
+		#    find out what kind of value -arg takes (int/any/list)
+		#      verify that -arg does operate in given mode (add/love/playlists)
+		#
+
+
+		if (grep {/$a/} (keys %args)) {
+			foreach my $mode (keys %{ $args{$a}} ) {
+				my $a_ref 	= \$args{$a}{$mode};
+				my $ga_ref	= \$givenArgs{$a}{$mode};
+				my @argmodes= keys %{$args{$a}};
+				my $argval	= $ARGV[1] || '^$';
+
+				$consumed = 1;
+
+				if	($$a_ref eq 'any') {
+
+					invalid($cmd,$a) unless (grep {/$cmd/} @argmodes);
+						$$ga_ref = $argval;
+
+					#if (grep {/$cmd/} @argmodes){
+					#	$$ga_ref = $argval;
+					#} else { invalid($cmd,$a);}
+
+				} elsif	($$a_ref eq 'int') {
+					invalid($cmd,$a) unless (grep {/$cmd/} @argmodes);
+						($$ga_ref = int $argval) != 0 ||   
+							printHelp("$a takes an int > 0"); 
+
+					#if (grep {/$cmd/} @argmodes){
+					#	($$ga_ref = int $argval) != 0 ||   
+					#		printHelp("$a takes an int > 0"); 
+					#} else {printHelp(
+					#		"$cmd does not take $a");
+					#}
+				} elsif	(ref $$a_ref eq 'ARRAY' ) {
+					invalid($cmd,$a) unless (grep {/$cmd/} @argmodes);
+
+					printHelp("$mode $a must be one of: @{$$a_ref}") 
+						unless (grep {/$argval/} @{$$a_ref} );
+							$$ga_ref = $argval; 
+
+					#if (grep {/$cmd/} @argmodes){
+					#	if (grep {/$argval/} @{$$a_ref} ){ # value in accepted list? 
+					#		$$ga_ref = $argval; 
+					#	} else { 
+					#		if ( $cmd eq $mode ){ printHelp(
+					#			"$mode $a must be one of: @{$$a_ref}");
+					#		} elsif ($cmd ne $mode ){ printHelp(
+					#			"$cmd does not take $a");
+					#		}
+					#	}
+					#} else {printHelp(
+					#		"$cmd does not take $a");
+					#}
+				} else {
+					my $type =  ref $args{$a}{$mode} || "none for $mode";
+					print "$a has type $type \n";
+					$consumed = 0;
+				}
 			}
-			exit 0;
+		} else {
+			printHelp("Invalid argument: $a") 
+		}
+		if ($consumed) { 
+			#shift @ARGV;
+			splice(@ARGV, 1, 1);
+			$argc--;
+			$consumed = 0;
 		}
 	}
+
+
+	#print Dumper( %givenArgs);
+	foreach my $arg (keys %givenArgs) {
+		foreach my $value (keys %{$givenArgs{$arg}}){
+			print "$arg - $value - $givenArgs{$arg}{$value} \n";
+		}
+	}
+	
+
+	#foreach (keys %valid){
+	#	if ($_ eq $cmd) {
+	#		if ($add && $OPT_tid != 0) {
+	#			$valid{$cmd}{short}->($OPT_tid, $OPT_pid);
+	#		} elsif ($add) {
+	#			$valid{$cmd}{long}->($OPT_track, $OPT_artist, $OPT_pid);
+
+	#		} elsif ($love && $OPT_tid != 0) {
+	#			$valid{$cmd}{short}->($OPT_tid);
+	#		} elsif ($love && $OPT_tid != 0 && $OPT_sort_reverse == 1) {
+	#			$valid{$cmd}{short_r}->($OPT_tid);
+	#		} elsif ($love) {
+	#			$valid{$cmd}{long}->($OPT_track, $OPT_artist);
+	#		} elsif ($love && $OPT_sort_reverse == 1) {
+	#			$valid{$cmd}{long_r}->($OPT_track, $OPT_artist);
+
+
+	#		} elsif ($create) {
+	#			$valid{$cmd}->($OPT_name, $OPT_description);
+
+
+	#		} else {
+	#			$valid{$cmd}->();
+	#		}
+	#		exit 0;
+	#	}
+	#}
+
+	exit 1;
+
+		#if ($a eq "-s") {
+		#	$argc--;
+		#	my $b = shift @ARGV || printHelp("Bad arguments, -s needs a value"); 
+
+		#	if 		($playlists) {
+
+		#		if		($b eq "id")   {$OPT_plist_order=\&sortPlaylistById;} 
+		#		elsif	($b eq "track"){$OPT_plist_order=\&sortPlaylistByTitle;}
+		#		else { printHelp("Bad -s option for cmd $cmd"); }
+
+		#	} elsif ($tracks) {
+
+		#		if		($b eq "id")   {$OPT_tracks_order=\&sortTracksByDate;} 
+		#		elsif	($b eq "track"){$OPT_tracks_order=\&sortTracksByTitle;}
+		#		elsif  ($b eq "artist"){$OPT_tracks_order=\&sortTracksByArtist;}
+		#		else { printHelp("Bad -s option for cmd $cmd"); }
+		#	}
+
+		#} elsif ($a eq "-p") {		$argc--;
+		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -p needs a value, see the playlists command"); 
+		#	$OPT_pid = $b;
+		#} elsif ($a eq "-t") {		$argc--;
+		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -t needs a value, see the tracks command"); 
+		#	$OPT_tid = int $b;
+		#} elsif ($a eq "-track") {	$argc--;
+		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -track needs a value"); 
+		#	$OPT_track = $b;
+		#} elsif ($a eq "-artist") {	$argc--;
+		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -artist needs a value"); 
+		#	$OPT_artist = $b;
+
+		#} elsif ($a eq "-n") {	$argc--;
+		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, supply a playlist name with -n"); 
+		#	$OPT_name = $b;
+		#} elsif ($a eq "-d") {	$argc--;
+		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, optional parameter -d needs a value "); 
+		#	$OPT_description = $b;
+
+		#} elsif ($a eq "-l") {		$argc--;
+		#	my $val = shift @ARGV 	|| printHelp("Bad -l value ") ; 
+		#	$OPT_limit = int $val; 
+		#	$OPT_limit > 0 || printHelp("Bad -l value");
+		#	# TODO make -l 1 work 
+		#} elsif ($a eq "-r") { 
+		#	$OPT_sort_reverse = 1;
+		#}
+
 }
 
 
 sub printHelp {
+	my $error =  $_[0] || "";
 
+	# TODO allow songs be named [0-9]*
 	(my $help =<< 'EOH');
-
 	.usage: $0: <command> [options]
 	. where command is one of 
-	.  p    playlists       list available (created) playlists
-	.  t    tracks          list recently scrobbled tracks
-	.  a    add             add a song to one of your lists
-	.
-	. and options is one or several of
-	.  -s <id|track|artist>	sort output by id, title or artist
-	.  -l <N>               limit output to N lines
-	.  -r                   reverse sort order
-	.  -track               song title (e.g. It Takes Two To Tango)
-	.  -artist              performer alias (e.g. Louis Armstrong)
-	.  -t                   track ID
-	.  -p                   playlist ID or name
+	.   add        (a)      append song to playlist
+	.   create     (c)      new playlist
+	.   love       (l)      <3 a track
+	.   playlists  (p)      show playlists
+	.   tracks     (t)      show recent scrobbles
 	.
 	. applicability of options:
-	.  playlists: -s <id | track>
-	.  tracks:    -s <id | title | artist>
-	.  add:       -p <pID | name> <-t tID | -track TITLE -artist NAME>
-	.  tracks,  
-	.  playlists: -l, -r
-
+	.   add        -p { pID | name } -t { tID | TITLE } -a NAME
+	.   create     -d DESCRIPTION -n NAME
+	.   love       [ -r (unlove)   ] -t { tID | TITLE } -a NAME
+	.   playlists  [ -l n] [ -s { id | track } ]
+	.   tracks     [ -l n] [ -s { id | title | artist }
+	.
+	. general options
+	.   -r                  reverse sort order (or unlove)
+	.   -l <N>              limit output to N lines
+	.   -s                  sort output by id, title or artist
 EOH
 	$help =~ s/^\t+\.//gm;
 	$help =~ s/\$0/$0/;
+	$help .= "\nERROR: $error \n" unless (length $error <= 0);
 	print $help;
-
-	my $error =  $_[0] ||  "";
-
-	print "ERROR: $_[0] \n " unless (length $error <= 0);
-	exit 1;
+	exit -1;
 }
 
 
@@ -371,6 +507,9 @@ sub listPlaylists {
 }
 
 sub addTrackToPlaylistById($$) {
+
+	printHelp("missing parameters") if grep( /""|0/, @_);
+
 	(my $tid, my $plid) = @_;
 
 	my $xml = getXmlRecentTracks();
@@ -385,15 +524,19 @@ sub addTrackToPlaylistById($$) {
 		}
 	}
 
-	addTrackToPlaylist( 
+	playlist_addTrack( 
 		$tracks->[$idx]->{name},
 		$tracks->[$idx]->{artist}{content},
 		$plid
 	);
 }
 
-sub addTrackToPlaylist($$$) {
+sub playlist_addTrack($$$) {
+
+	printHelp("missing parameters") if grep( /""|0/, @_);
+
 	(my $track, my $artist, my $plid) = @_;
+
 
 	my $xml		= getXmlPlaylists();
 	my $pls_ref	= $xml->{playlists}->{playlist};
@@ -443,6 +586,10 @@ sub addTrackToPlaylist($$$) {
 		}
 	}
 
+	rintHelp("No such playlist") if ($plid =~ m/0|^$/ );
+	printHelp("Bad artist name") if ($artist =~ m/^$/ );
+	printHelp("Bad track name") if ($track =~ m/^$/ );
+
 
 	# fill in parameters
 
@@ -452,20 +599,24 @@ sub addTrackToPlaylist($$$) {
 	$servargs{track}		= $track;
 	$servargs{playlistID}	= $lfm_plid;
 
-	# sign the method
+	getSignedMethod(\%servargs);
 
-	my $ms = "";
-	foreach my $key (sort keys %servargs){
-		$ms .= encode_utf8($key) . encode_utf8($servargs{$key});
-		$audioscrobbler->query_param($key, encode_utf8($servargs{$key}));
-	}
-		$ms .= encode_utf8($secret); 
-		$ms = md5_hex($ms);
-		$audioscrobbler->query_param('api_sig', encode_utf8($ms));
+#	# sign the method
+#
+#	my $ms = "";
+#	foreach my $key (sort keys %servargs){
+#		$ms .= encode_utf8($key) . encode_utf8($servargs{$key});
+#		$audioscrobbler->query_param($key, encode_utf8($servargs{$key}));
+#	}
+#		$ms .= encode_utf8($secret); 
+#		$ms = md5_hex($ms);
+#		$audioscrobbler->query_param('api_sig', encode_utf8($ms));
 
 	# post the request
 
 	my $response = $ua->post($audioscrobbler);
+	$audioscrobbler->query_param('sk', "");
+	
 
 	if ($response->is_success) {
 
@@ -474,23 +625,114 @@ sub addTrackToPlaylist($$$) {
 
 
 	} else {
+		print STDERR $response->status_line, "\n";
+		my $error = XMLin($response->decoded_content);
+		print $error->{error}{content} . "\n";
+	}
+}
+
+sub createPlaylist($$){
+
+	(my $playlist_title, my $playlist_description) = @_;
+
+	$servargs{method}		= "playlist.create";
+	$servargs{title}		= $playlist_title;
+	$servargs{description}	= $playlist_description;
+	$servargs{sk}			= $lfm_sk;
+
+	getSignedMethod(\%servargs);
+
+#	my $ms = "";
+#	foreach my $key (sort keys %servargs){
+#		$ms .= encode_utf8($key) . encode_utf8($servargs{$key});
+#		$audioscrobbler->query_param($key, encode_utf8($servargs{$key}));
+#	}
+#		$ms .= encode_utf8($secret); 
+#		$ms = md5_hex($ms);
+#		$audioscrobbler->query_param('api_sig', encode_utf8($ms));
+
+
+	my $response = $ua->post($audioscrobbler);
+	$audioscrobbler->query_param('sk', "");
+	
+	if ($response->is_success) {
+
+		printf {*STDOUT} "created playlist:  %s\n\t%s\n", 
+			$playlist_title,
+			$playlist_description;
+
+	} else {
 		#print STDERR $response->status_line, "\n";
 		my $error = XMLin($response->decoded_content);
 		print $error->{error}{content} . "\n";
 	}
 }
 
-sub createPlaylist(){
-#	playlist.create
-#	Create a Last.fm playlist on behalf of a user
-#	Params
-#	title (Optional) : Title for the playlist
-#	description (Optional) : Description for the playlist
-#	api_key (Required) : A Last.fm API key.
-#	api_sig (Required) : A Last.fm method signature. See authentication for more information.
-#	sk (Required) : A session key generated by authenticating a user via the authenticatio
+
+sub trackLoveById($){
+
+	my $tid = $_[0];
+
+	my $xml = getXmlRecentTracks();
+	my $tracks = $xml->{recenttracks}{track} ;
+	my $idlist = mapTrackIds($tracks);
+
+	###############
+
+	my $idx = 0;
+
+	while ( ((my $aidx, my $lsid) = each %$idlist) && ! $idx){
+		if ($tid == $lsid) {
+			$idx = $aidx;
+		}
+	}
+
+	trackLove( 
+		$tracks->[$idx]->{name},
+		$tracks->[$idx]->{artist}{content},
+	);
 }
 
+sub trackLove($$){
+
+	(my $track, my $artist) = @_;
+
+	$servargs{method}		= "track.love";
+	$servargs{artist}		= $artist;
+	$servargs{track}		= $track;
+	$servargs{sk}			= $lfm_sk;
+
+
+	getSignedMethod(\%servargs);
+
+	my $response = $ua->post($audioscrobbler);
+	$audioscrobbler->query_param('sk', "");
+	
+	if ($response->is_success) {
+
+		printf {*STDOUT} "loved song: %s - %s\n", $artist, $track;
+
+	} else {
+		#print STDERR $response->status_line, "\n";
+		my $error = XMLin($response->decoded_content);
+		print $error->{error}{content} . "\n";
+	}
+
+}
+
+sub getSignedMethod($){
+	my $servargs	= $_[0];
+	my $ms 			= "";
+
+	foreach my $key (sort keys %$servargs){
+		$ms 	.= encode_utf8($key)  	.	encode_utf8($servargs->{$key});
+		$audioscrobbler->query_param($key, 	encode_utf8($servargs->{$key}));
+	}
+		$ms 	.= encode_utf8($secret); 
+		$ms		 = md5_hex($ms);
+		$audioscrobbler->query_param('api_sig', encode_utf8($ms));
+	return $ms;
+}
 
 sub sortPlaylistByTitle($){
 	my %xml = %{ $_[0] };
