@@ -1,0 +1,21 @@
+THE FUTURE 
+==========
+Stuff to fix or implement. 
+
+FEATURES
+--------
+* option -c for cache - dont fetch info for -t and -p from the net. 
+* tracks - add support for -to, -from and -page
+* get-sk - automate the process in this script
+
+
+QUALITY
+-------
+* generalize mutually exclusive arguments and validation
+
+
+BUGS
+----
+* add -l support for -t to work 
+* tracks -l 1 doesnt work
+* tracks upper limit 200
