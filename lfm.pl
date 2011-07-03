@@ -1,42 +1,39 @@
 #!/usr/bin/perl -w
-use warnings;
 use strict;
+use warnings;
 
+use Data::Dumper;
+use Digest::MD5 qw(md5_hex);
+use Encode;
 use English;
 #use File::Basename;
 use LWP::UserAgent;
-use URI::QueryParam;
 use List::Util qw[min max];
-use Encode;
-use XML::Simple;
-use Digest::MD5 qw(md5_hex);
+use Switch 'Perl 6';
 use Tie::File; 
+use URI::QueryParam;
+use XML::Simple;
 
-use Data::Dumper;
 #$Data::Dumper::Indent = 1;
 #$Data::Dumper::Pair = " => ";
-
 #use Term::ANSIColor qw(:constants);
 #$Term::ANSIColor::AUTORESET = 1;
 
 
-my $conf_path 	= "$ENV{'HOME'}/.mpc/last.fm";
 
-open(CONF, "<$conf_path") or die "Did you make a session key?: cant read: $!";
-my @conflines = <CONF>;
-
-my $service	= 'http://ws.audioscrobbler.com/2.0/';
-my $apikey 	= '1dfdc3a278e6bac5c76442532fcd6a05';
-my $secret 	= 'a70bafc9e39612700a2c1b61b5e0ab61';
-chomp( my $lfm_user = (split /:/, $conflines[0])[0]); 
-chomp( my $lfm_sk 	= (split /:/, $conflines[0])[1]); 
-
-close(CONF);
-
-
+use constant OUTPUT_LIMIT	=> 14; # lines
 use constant WIDTH_ARTIST	=> 43;
 use constant WIDTH_SONG		=> 23;
 
+open(CONF, "<$ENV{'HOME'}/.mpc/last.fm") or die "Did you make a session key?: cant read: $!";
+		my @conflines = <CONF>;
+chomp( 	my $lfm_user = (split /:/, $conflines[0])[0]); 
+chomp( 	my $lfm_sk 	= (split /:/, $conflines[0])[1]); 
+close(CONF);
+
+my $service				= 'http://ws.audioscrobbler.com/2.0/';
+my $apikey 				= '1dfdc3a278e6bac5c76442532fcd6a05';
+my $secret				= 'a70bafc9e39612700a2c1b61b5e0ab61';
 
 
 my $httpTimeout			= 15;
@@ -50,45 +47,41 @@ my $audioscrobbler		= URI->new($service);
 
 #my $xs					= new XML::Simple( KeyAttr => [ ],);
 
-my $OPT_limit			= 14;
-my $OPT_sort_reverse 	= 0;
-my $OPT_plist_order		= \&sortPlaylistByTitle;
-my $OPT_tracks_order	= \&sortTracksByDate;
-my $OPT_artist			= "";
-my $OPT_track			= "";
-my $OPT_pid				= 0;
-my $OPT_tid				= 0;
-my $OPT_description		= "";
-my $OPT_name			= "";
+my %OPT = ();
+#my $OPT_limit;
+#my $OPT_reverse;
+#my $OPT_pid;
+#my $OPT_tid;
+#my $OPT_artist;
+#my $OPT_track;
+#my $OPT_name;
+#my $OPT_description;
+#my $OPT_order_playlist;
+#my $OPT_order_tracks;
 
-
-
-binmode STDOUT, ":encoding($terminal_encoding)";
-
-
-#print Dumper(getXmlRecentTracks());
-#exit 1;
 
 parseArguments();
+binmode STDOUT, ":encoding($terminal_encoding)";
 
 ## 
 ## FEEL FREE TO EDIT BELOW THIS LINE
 ##
 
-# TODO generalize argument checking and input validation
 
 sub parseArguments {
-	my $argc = @ARGV;
+
 	my %cmds = (
 		add 		=> { long 	=> \&playlist_addTrack, 
-						 short 	=> \&addTrackToPlaylistById,},
-		create 		=> \&createPlaylist, 
+						 short 	=> \&addTrackToPlaylistById,
+				 	},
+		create 					=> \&createPlaylist, 
 		love		=> { long	=> \&trackLove,
 						 short	=> \&trackLoveById,
 						 long_r => \&trackUnLove,
-						 short_r=> \&trackUnLoveById, },
-		playlists	=> \&listPlaylists, 
-		tracks		=> \&listRecentScrobbles,
+						 short_r=> \&trackUnLoveById, 
+				 	},
+		playlists				=> \&listPlaylists, 
+		tracks					=> \&listRecentScrobbles,
 	);
 	my %cmd_s2l = (
 		a => 'add',
@@ -98,207 +91,290 @@ sub parseArguments {
 		t => 'tracks',
 	);
 
-	$cmds{a} = \$cmds{$cmd_s2l{a}};
-	$cmds{c} = \$cmds{$cmd_s2l{c}};
-	$cmds{l} = \$cmds{$cmd_s2l{l}};
-	$cmds{p} = \$cmds{$cmd_s2l{p}};
-	$cmds{t} = \$cmds{$cmd_s2l{t}};
+	##$cmds{a} = \$cmds{$cmd_s2l{a}};
+	##$cmds{c} = \$cmds{$cmd_s2l{c}};
+	##$cmds{l} = \$cmds{$cmd_s2l{l}};
+	##$cmds{p} = \$cmds{$cmd_s2l{p}};
+	##$cmds{t} = \$cmds{$cmd_s2l{t}};
+	#foreach (keys %cmd_s2l){
+	#	$cmds{$_} = \$cmds{$cmd_s2l{$_}};
+	#}
 
 	# any - anything goes
 	# int - integers
 	# []  - list of possible values
 	my %args = (
-	 '-a' => { add=>'any', love=>'any',  }, 
-	 '-d' => { create=>'any' }, 
-	 '-l' => { playlists=>'int', tracks=>'int' }, 
-	 '-n' => { create=>'any' }, 
-	 '-p' => { add=>'int'}, 
-	'--p' => { add=>'any'}, 
-	 '-r' => { love=>'', playlists=>'', tracks=>''  }, 
-	 '-s' => { playlists=>['id','track'], track=>['id','track','artist'] }, 
-	 '-t' => { add=>'int', 	love=>'int' },
-	'--t' => { add=>'any', 	love=>'any' },
+	 '-a' => {	add=>	'any', 
+				love=>	'any' 				}, 
+	 '-d' => {	create=>'any' 				}, 
+	 '-l' => {	add =>		'int', 
+		 		love=>		'int', 
+				playlists=>	'int',
+				tracks=>	'int'			}, 
+	 '-n' => {	create=>'any' 				}, 
+	 '-p' => {	add=>		'int'			}, 
+	'--p' => {	add=>	'any'				}, 
+	 '-r' => {	love=>				'na',
+		 		playlists=>			'na', 
+				tracks=>			'na'	}, 
+	 '-s' => {	playlists=>	['id','title','track'], 
+		 		track=>		['id','track','artist'] }, 
+	 '-t' => {	add=>		'int',
+		 		love=>		'int'			},
+	'--t' => { 	add=>	'any',
+				love=>	'any' 				},
+
+	 #'--' => { playlists=>'filter' }, 
+	 #'-x' => { add=>'any'}, 
+	 #'-y' => { add=>'any'}, 
+	 #'-f' => { add=>'any'}, 
+	 #'-g' => { add=>'any'}, 
+	 #'-c' => { add=>'any'}, 
 	);
 
+
+	my %xargs = (
+		add	=>	{
+					'-p' => [[ '--p' ]],
+					'-t' => [[ '--t' ]],
+					'-a' => [['-t']],
+				},
+		love => {
+					'-t' => [[ '--t' ]],
+					'-a' => [['-t']],
+				}
+		#tracks => 
+	);
+	my $argc = @ARGV;
 	my %givenArgs = ();
-	my $consumed = 0;
-	my $cmd = $ARGV[0] || '^$'; 
+	my $argval_consumed = 0;
+	my $cmd = $ARGV[0] || '<none>'; 
 	   $cmd = $cmd_s2l{$cmd} || $cmd;
-	print "cmd: $cmd \n";
 
-	unless (grep {/^$cmd$/} (keys %cmds)) {
-		printHelp("command is one of: @{[sort keys %cmds]}");
-	}
+	
+	printHelp("Invalid command: $cmd should be one of: @{[sort keys %cmds]}")
+		unless (grep {/^$cmd$/} (keys %cmds));
 
-	sub invalid($$){ printHelp("$_[0] does not take $_[1]"); }
 
-	print "args: $argc \n ";
+	# general strategy: 
+	#  check that -arg is in %args
+	#  check that command is a key in the '-a' hash or %args
+	#    find out what kind of value -arg takes (int/any/list)
+	#      print help or assign value 
+
 	while ($argc > 1) {
+
 		$a = splice @ARGV, 1, 1;
 		$argc--;
-		print "a: $a \n";
-		#
-		# general strategy: 
-		#  check that -arg is in %args
-		#    find out what kind of value -arg takes (int/any/list)
-		#      verify that -arg does operate in given mode (add/love/playlists)
-		#
+
+		my $arg_ref		= $args{$a};
+		my @modes4arg	= keys %$arg_ref;
+		my $a_ref		= \$args{$a}{$cmd}; 		# -r -> add -> any
+		#my $ga_ref		= \$givenArgs{$a}{$cmd};	# checked arguments
+		my $argval		= $ARGV[1] || \\0;
+		my $mode_arg	= grep {/$cmd/} @modes4arg;
 
 
-		if (grep {/$a/} (keys %args)) {
-			foreach my $mode (keys %{ $args{$a}} ) {
-				my $a_ref 	= \$args{$a}{$mode};
-				my $ga_ref	= \$givenArgs{$a}{$mode};
-				my @argmodes= keys %{$args{$a}};
-				my $argval	= $ARGV[1] || '^$';
 
-				$consumed = 1;
+		printHelp("Invalid argument: $a") unless grep /$a/, %args;
+		printError("Invalid argument: command $cmd does not take argument $a") 
+			unless $mode_arg;
 
-				if	($$a_ref eq 'any') {
+		$argval_consumed = 1;
 
-					invalid($cmd,$a) unless (grep {/$cmd/} @argmodes);
-						$$ga_ref = $argval;
+		if	($$a_ref eq 'any') {
+			printHelp("argument $_[0] needs a value") 
+				unless ref $argval ne 'REF';
 
-					#if (grep {/$cmd/} @argmodes){
-					#	$$ga_ref = $argval;
-					#} else { invalid($cmd,$a);}
+			$givenArgs{$cmd}{$a} = $argval;
 
-				} elsif	($$a_ref eq 'int') {
-					invalid($cmd,$a) unless (grep {/$cmd/} @argmodes);
-						($$ga_ref = int $argval) != 0 ||   
-							printHelp("$a takes an int > 0"); 
+		} elsif	($$a_ref eq 'int') {
+			printError( "$cmd $a n must be an integer (tID)") 
+				unless ( ref $argval ne 'REF' && 
+					$argval =~ m/^\d+$/ );
 
-					#if (grep {/$cmd/} @argmodes){
-					#	($$ga_ref = int $argval) != 0 ||   
-					#		printHelp("$a takes an int > 0"); 
-					#} else {printHelp(
-					#		"$cmd does not take $a");
-					#}
-				} elsif	(ref $$a_ref eq 'ARRAY' ) {
-					invalid($cmd,$a) unless (grep {/$cmd/} @argmodes);
+			$givenArgs{$cmd}{$a} = int $argval;
 
-					printHelp("$mode $a must be one of: @{$$a_ref}") 
-						unless (grep {/$argval/} @{$$a_ref} );
-							$$ga_ref = $argval; 
+		} elsif	(ref $$a_ref eq 'ARRAY' ) {
+			printHelp("$cmd $a must be one of: @{$$a_ref}") 
+				unless (grep {/$argval/} @{$$a_ref} );
 
-					#if (grep {/$cmd/} @argmodes){
-					#	if (grep {/$argval/} @{$$a_ref} ){ # value in accepted list? 
-					#		$$ga_ref = $argval; 
-					#	} else { 
-					#		if ( $cmd eq $mode ){ printHelp(
-					#			"$mode $a must be one of: @{$$a_ref}");
-					#		} elsif ($cmd ne $mode ){ printHelp(
-					#			"$cmd does not take $a");
-					#		}
-					#	}
-					#} else {printHelp(
-					#		"$cmd does not take $a");
-					#}
-				} else {
-					my $type =  ref $args{$a}{$mode} || "none for $mode";
-					print "$a has type $type \n";
-					$consumed = 0;
+			$givenArgs{$cmd}{$a} = $argval; 
+
+		} elsif	($$a_ref eq 'filter') {
+
+			# TODO make filters work
+			$givenArgs{$cmd}{$a} .= $argval; 
+
+		} else {
+
+			$givenArgs{$cmd}{$a} = 1; 
+			$argval_consumed = 0;
+		}
+
+		if ($argval_consumed) { 
+			my $cut = splice(@ARGV, 1, 1);
+			$argc--;
+			$argval_consumed = 0;
+		}
+	}
+
+
+#	#print Dumper( %givenArgs);
+#	foreach my $key (keys %givenArgs) {
+#		foreach my $mode (keys %{$givenArgs{$key}}){
+#			my $val = $givenArgs{$key}{$mode} || 1;
+#			print "$key\t- $mode\t- $val \n";
+#		}
+#	}
+
+	# verify that no conflicting arguments are given
+	foreach my $a (keys %{$givenArgs{$cmd}}){
+		my $nocrash = 1; # todo - maybe cycle through everything and collect all
+						 # errors instead of exiting on 1st found
+		my $cxalr 		= $xargs{$cmd} || {};
+		my %cmd_xargs	= %$cxalr;
+		my @cakeys		= keys %cmd_xargs;
+		my $cakidx		= 0;
+			my $lists;
+			my $lidx;
+				my @list;
+				my $single;
+				my $combined;
+					my $alltrue;
+					my $comidx;
+		if ($xargs{$cmd}{$a}) {
+			while ($nocrash && $cakidx < scalar @cakeys ){
+				if ( $a ne $cakeys[$cakidx]) { $cakidx++; next; }
+				$lists 		= $cmd_xargs{$cakeys[$cakidx++]};
+				$lidx 		= 0;
+				while ($nocrash && $lidx < scalar @$lists) { 
+					@list 		= @{ $lists->[$lidx++] };
+					$single		= scalar (@list) == 1;
+					$combined	= scalar (@list) >  1;
+					if (grep {/^$a$/} @list) { 
+						next; 
+					} else {
+						if ($combined) {
+							$alltrue	= 1;
+							$comidx 	= 0;
+							while ($alltrue && $comidx < scalar @list){
+								$alltrue = 
+								$alltrue && $givenArgs{$cmd}{$list[$comidx]};
+								$comidx++; }
+							printError("$cmd $a: invalid argument combination @list")
+							if ($alltrue) 
+
+						} elsif ($single) {
+							printError("$cmd $a: invalid argument combination $list[0]")
+							if ($givenArgs{$cmd}{$list[0]});
+						}
+					}
 				}
 			}
-		} else {
-			printHelp("Invalid argument: $a") 
-		}
-		if ($consumed) { 
-			#shift @ARGV;
-			splice(@ARGV, 1, 1);
-			$argc--;
-			$consumed = 0;
-		}
+		} 
 	}
 
 
-	#print Dumper( %givenArgs);
-	foreach my $arg (keys %givenArgs) {
-		foreach my $value (keys %{$givenArgs{$arg}}){
-			print "$arg - $value - $givenArgs{$arg}{$value} \n";
-		}
+
+	$OPT{'limit'}		= $givenArgs{$cmd}{'-l'}	|| OUTPUT_LIMIT;
+	$OPT{'reverse'} 	= $givenArgs{$cmd}{'-r'}	|| 0;
+	$OPT{'pid'}			= $givenArgs{$cmd}{'-p'}	|| 0;
+	$OPT{'tid'}			= $givenArgs{$cmd}{'-t'}	|| 0;
+	$OPT{'artist'}		= $givenArgs{$cmd}{'-a'}	|| "";
+	$OPT{'track'}		= $givenArgs{$cmd}{'--t'}	|| "";
+	$OPT{'name'}		= $givenArgs{$cmd}{'-n'}	|| "";
+	$OPT{'description'}	= $givenArgs{$cmd}{'-d'}	|| "";
+	$OPT{'order_playlist'}	= \&sortPlaylistByTitle;
+	$OPT{'order_tracks'}	= \&sortTracksByDate;
+
+
+
+	if ($cmd eq "playlists") {
+		$givenArgs{$cmd}{'-s'} = $givenArgs{$cmd}{'-s'} || 'title';
 	}
+	if ($cmd eq "tracks") {
+		$givenArgs{$cmd}{'-s'} = $givenArgs{$cmd}{'-s'} || 'id';
+	}
+
+	if ( $cmd eq "tracks" && $givenArgs{$cmd}{'-s'} eq 'id' ){
+		$OPT{'order_tracks'} = \&sortTracksByDate; }
+	if ( $cmd eq "tracks" && $givenArgs{$cmd}{'-s'} eq 'track' ){
+		$OPT{'order_tracks'} = \&sortTracksByTitle;}
+	if ( $cmd eq "tracks" && $givenArgs{$cmd}{'-s'} eq 'artist' ){
+		$OPT{'order_tracks'} = \&sortTracksByArtist; }
+
+	if ( $cmd eq "playlists" && $givenArgs{$cmd}{'-s'} eq 'track' ){
+		$OPT{'order_playlist'} = \&sortPlaylistByTrack; }
+	if ( $cmd eq "playlists" && $givenArgs{$cmd}{'-s'} eq 'id' ){
+		$OPT{'order_playlist'} = \&sortPlaylistById; }
+	if ( $cmd eq "playlists" && $givenArgs{$cmd}{'-s'} eq 'title' ){
+		$OPT{'order_playlist'} = \&sortPlaylistByTitle; }
 	
+	given ($cmd) {
+	when "add"		{ 	$cmds{$cmd}{short}->(
+							$givenArgs{$cmd}{'-t'},
+							$givenArgs{$cmd}{'-p'}||
+							$givenArgs{$cmd}{'--p'}
+							) unless (	$givenArgs{$cmd}{'-a'} );
 
-	#foreach (keys %valid){
-	#	if ($_ eq $cmd) {
-	#		if ($add && $OPT_tid != 0) {
-	#			$valid{$cmd}{short}->($OPT_tid, $OPT_pid);
-	#		} elsif ($add) {
-	#			$valid{$cmd}{long}->($OPT_track, $OPT_artist, $OPT_pid);
+						if ($givenArgs{$cmd}{'-a'}) {
 
-	#		} elsif ($love && $OPT_tid != 0) {
-	#			$valid{$cmd}{short}->($OPT_tid);
-	#		} elsif ($love && $OPT_tid != 0 && $OPT_sort_reverse == 1) {
-	#			$valid{$cmd}{short_r}->($OPT_tid);
-	#		} elsif ($love) {
-	#			$valid{$cmd}{long}->($OPT_track, $OPT_artist);
-	#		} elsif ($love && $OPT_sort_reverse == 1) {
-	#			$valid{$cmd}{long_r}->($OPT_track, $OPT_artist);
+						$cmds{$cmd}{long}->(
+							$givenArgs{$cmd}{'-t'}||
+							$givenArgs{$cmd}{'-t'},
+							$givenArgs{$cmd}{'-a'},
+							$givenArgs{$cmd}{'-p'}||
+							$givenArgs{$cmd}{'--p'});
+						}
+					}
+	when "create"	{	$cmds{$cmd}->(
+							$givenArgs{$cmd}{'-n'},
+							$givenArgs{$cmd}{'-d'}
+							) if ($givenArgs{$cmd}{'-n'} );
+							unless ($givenArgs{$cmd}{'-n'} ){
+								print "need -n [and -d]\n";
+							}
+					}
+	when "love"		{	$cmds{$cmd}{long}->(
+							$givenArgs{$cmd}{'--t'},
+							$givenArgs{$cmd}{'-a'}
+							) unless ( 	$givenArgs{$cmd}{'-r'} || 
+										$givenArgs{$cmd}{'-t'} );
+						$cmds{$cmd}{long_r}->(
+							$givenArgs{$cmd}{'--t'},
+							$givenArgs{$cmd}{'-a'}
+							) unless ( 	$givenArgs{$cmd}{'-t'} );
+						$cmds{$cmd}{short}->(
+							$givenArgs{$cmd}{'-t'}
+							) unless (	$givenArgs{$cmd}{'-r'});
+						$cmds{$cmd}{short_r}->(
+							$givenArgs{$cmd}{'-t'});
+					}
+	when "playlists"{	$cmds{$cmd}->(
+							$givenArgs{$cmd}{'-n'},
+							$givenArgs{$cmd}{'-d'});
+					}
+	when "tracks"	{	$cmds{$cmd}->();
+					}
+	}
 
-
-	#		} elsif ($create) {
-	#			$valid{$cmd}->($OPT_name, $OPT_description);
-
-
-	#		} else {
-	#			$valid{$cmd}->();
-	#		}
-	#		exit 0;
-	#	}
-	#}
-
-	exit 1;
-
-		#if ($a eq "-s") {
-		#	$argc--;
-		#	my $b = shift @ARGV || printHelp("Bad arguments, -s needs a value"); 
-
-		#	if 		($playlists) {
-
-		#		if		($b eq "id")   {$OPT_plist_order=\&sortPlaylistById;} 
-		#		elsif	($b eq "track"){$OPT_plist_order=\&sortPlaylistByTitle;}
-		#		else { printHelp("Bad -s option for cmd $cmd"); }
-
-		#	} elsif ($tracks) {
-
-		#		if		($b eq "id")   {$OPT_tracks_order=\&sortTracksByDate;} 
-		#		elsif	($b eq "track"){$OPT_tracks_order=\&sortTracksByTitle;}
-		#		elsif  ($b eq "artist"){$OPT_tracks_order=\&sortTracksByArtist;}
-		#		else { printHelp("Bad -s option for cmd $cmd"); }
-		#	}
-
-		#} elsif ($a eq "-p") {		$argc--;
-		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -p needs a value, see the playlists command"); 
-		#	$OPT_pid = $b;
-		#} elsif ($a eq "-t") {		$argc--;
-		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -t needs a value, see the tracks command"); 
-		#	$OPT_tid = int $b;
-		#} elsif ($a eq "-track") {	$argc--;
-		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -track needs a value"); 
-		#	$OPT_track = $b;
-		#} elsif ($a eq "-artist") {	$argc--;
-		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, -artist needs a value"); 
-		#	$OPT_artist = $b;
-
-		#} elsif ($a eq "-n") {	$argc--;
-		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, supply a playlist name with -n"); 
-		#	$OPT_name = $b;
-		#} elsif ($a eq "-d") {	$argc--;
-		#	my $b = shift @ARGV 	|| printHelp("Bad arguments, optional parameter -d needs a value "); 
-		#	$OPT_description = $b;
-
-		#} elsif ($a eq "-l") {		$argc--;
-		#	my $val = shift @ARGV 	|| printHelp("Bad -l value ") ; 
-		#	$OPT_limit = int $val; 
-		#	$OPT_limit > 0 || printHelp("Bad -l value");
-		#	# TODO make -l 1 work 
-		#} elsif ($a eq "-r") { 
-		#	$OPT_sort_reverse = 1;
-		#}
-
+	exit -1;
 }
 
+
+sub printError {
+	my $error =  $_[0] || "";
+	my $help = "\nERROR:\n$error \n" unless (length $error <= 0);
+	print STDERR $help;
+	exit -1;
+}
+
+sub printWarning {
+	my $error =  $_[0] || "";
+	my $help = "\nWARNING:\n$error \n" unless (length $error <= 0);
+	print STDERR $help;
+}
 
 sub printHelp {
 	my $error =  $_[0] || "";
@@ -317,8 +393,8 @@ sub printHelp {
 	.   add        -p { pID | name } -t { tID | TITLE } -a NAME
 	.   create     -d DESCRIPTION -n NAME
 	.   love       [ -r (unlove)   ] -t { tID | TITLE } -a NAME
-	.   playlists  [ -l n] [ -s { id | track } ]
-	.   tracks     [ -l n] [ -s { id | title | artist }
+	.   playlists  [ -l n] [ -s { id | title | track  }]
+	.   tracks     [ -l n] [ -s { id | title | artist }]
 	.
 	. general options
 	.   -r                  reverse sort order (or unlove)
@@ -327,43 +403,71 @@ sub printHelp {
 EOH
 	$help =~ s/^\t+\.//gm;
 	$help =~ s/\$0/$0/;
-	$help .= "\nERROR: $error \n" unless (length $error <= 0);
-	print $help;
-	exit -1;
+	$help .= "\nERROR:\n$error \n" unless (length $error <= 0);
+	print STDERR $help;
+	exit;
 }
 
 
 sub getXmlRecentTracks {
 
 	$servargs{method}	= "user.getrecenttracks";
-	$servargs{limit}	= $OPT_limit;
+	$servargs{limit}	= $OPT{'limit'};
 	$servargs{page}		= "1";
 	$servargs{user}		= $lfm_user;
 	#$servargs{from}	= `epoch`;
 	#$servargs{to}		= `epoch`;
 
-	foreach my $param (sort keys %servargs){
-		$audioscrobbler->query_param($param, $servargs{$param}); }
+	my $MAX_TRACKS = 200; # Defaults to 50. Maximum is 200. (API 2.0)
 
-	my $response = $ua->get($audioscrobbler);
 
-	if ($response->is_success) {
-		#print Dumper($response->decoded_content);
-		return XMLin(
-				$response->decoded_content, 
-				keyattr => {  },
-				#keyattr => { track=>'date' },
-				forcearray => 0,
-		);
-	} else {
-		print STDERR $response->status_line, "\n";
+	if ($servargs{limit} > $MAX_TRACKS ) {
+		printWarning((caller(0))[3].": limit of $MAX_TRACKS tracks exceeded ");
+
 	}
+
+
+	my $response = getResponse(\%servargs);
+	
+	if ($response->is_success) {
+		return XMLin(
+			$response->decoded_content, 
+			keyattr => {  },
+			#keyattr => { track=>'date' },
+			forcearray => 0,
+		);
+	}
+
+	printError((caller(0))[3].": Failed to fetch data");
+	return -1;
+}
+
+sub getResponse($){
+	my %servargs;
+	my $response;
+
+	printError("getResponse(): please pass a hash reference")
+	if (ref $_[0] ne 'HASH');
+
+	%servargs = %{$_[0]};
+
+	while ( (my $k,my $v)=each %servargs){ 
+		$audioscrobbler->query_param($k, $v);
+	} 
+
+	$response = $ua->get($audioscrobbler);
+
+	if (! $response->is_success) {
+		printWarning((caller(0))[3].": ".$response->status_line );
+	}
+
+	return $response
 }
 
 sub getXmlRecentTracksAlt {
 
 	$servargs{method}	= "user.getrecenttracks";
-	$servargs{limit}	= $OPT_limit;
+	$servargs{limit}	= $OPT{'limit'};
 	$servargs{page}		= "1";
 	$servargs{user}		= $lfm_user;
 	#$servargs{from}	= `epoch`;
@@ -423,7 +527,7 @@ sub mapTrackIds($){
 
 	# make shortcuts
 	foreach (@sorted){
-		if ($OPT_sort_reverse){
+		if ($OPT{'reverse'}){
 			$idlist{$_} = ++$backwards;
 		} else {
 			$idlist{$_} = $len--;
@@ -437,12 +541,12 @@ sub listRecentScrobbles {
 
 	my $maxa = 0;
 	my $maxt = 0;
-	my $maxid = 1 +( int length $OPT_limit) ;
+	my $maxid = 2 +(length $OPT{'limit'});
 
 	my $xmlresponse = getXmlRecentTracks();
 	my $tracks = $xmlresponse->{recenttracks}{track} ;
 	my @tracks = @{ $tracks };
-	my @sorted = $OPT_tracks_order->($tracks);
+	my @sorted = $OPT{'order_tracks'}->($tracks);
 
 	my $idlist = mapTrackIds($tracks);
 
@@ -456,9 +560,9 @@ sub listRecentScrobbles {
 		$maxt = min(WIDTH_SONG, $maxt);
 		$maxt += 4-($maxid);
 
+	my $format = "% ".$maxid."s %02s:%02s % ".$maxa."s - %- ".$maxt."s\n";
 
-	printf {*STDOUT} "% ".$maxid."s  %02s:%02s % ".$maxa."s - %- ".$maxt."s\n", 
-			"tID", "hh", "mm", "Artist", "Track";
+	printf {*STDERR}  $format, "tID", "hh", "mm", "Artist", "Track";
 
 	foreach (@sorted){
 
@@ -471,7 +575,7 @@ sub listRecentScrobbles {
 		#	(localtime($epoch))[0,1,2,3,4,5,6]; 
 		my ($min,$hour) = (localtime($epoch))[1,2] ;
 
-		printf {*STDOUT} "% ".$maxid."d  %02d:%02d % ".$maxa."s - %- ".$maxt."s\n", 
+		printf {*STDOUT} $format, 
 		#$idlist->{$_}, $hour, $min, $artist, $name;
 			$_ + 1, $hour, $min, $artist, $name;
 	}
@@ -483,12 +587,12 @@ sub mapPlaylistIds($){
 	my $len		= keys %{ $xmlref };
 	my %idlist	= ();
 
-	my $global_so = $OPT_sort_reverse;
-	$OPT_sort_reverse = 1;
+	my $global_so = $OPT{'reverse'};
+	$OPT{'reverse'} = 1;
 	foreach my $id ( sortPlaylistById( $xmlref )) { 
 		$idlist{$id} = $len--;
 	}
-	$OPT_sort_reverse = $global_so;
+	$OPT{'reverse'} = $global_so;
 	return \%idlist
 }
 
@@ -499,18 +603,22 @@ sub listPlaylists {
 	my %pls		= %{ $pls_ref };
 	my $idlist  = mapPlaylistIds($pls_ref);
 
-	printf {*STDOUT}  "% 9s = %s \n", "ID", "Playlist" ; 
+	my $format	= "% 6s % 3s  %s \n";
 
-	foreach my $id ( $OPT_plist_order->( $pls_ref )) { 
-		printf {*STDOUT}  "% 9s = %s \n", $idlist->{$id}, $pls{$id}{title} ; 
+		printf {*STDOUT}  $format, "len", "pID", "Playlist" ; 
+
+	foreach my $id ( $OPT{'order_playlist'}->( $pls_ref )) { 
+		printf {*STDOUT}  $format, 
+		$pls{$id}{size},
+		$idlist->{$id}, 
+		$pls{$id}{title} ; 
 	}
 }
 
 sub addTrackToPlaylistById($$) {
 
-	printHelp("missing parameters") if grep( /""|0/, @_);
-
 	(my $tid, my $plid) = @_;
+
 
 	my $xml = getXmlRecentTracks();
 	my $tracks = $xml->{recenttracks}{track} ;
@@ -524,16 +632,23 @@ sub addTrackToPlaylistById($$) {
 		}
 	}
 
-	playlist_addTrack( 
+
+	my $ok = playlist_addTrack( 
 		$tracks->[$idx]->{name},
 		$tracks->[$idx]->{artist}{content},
 		$plid
-	);
+	); 
+
+	if ($ok != 0 ){
+		print "$tracks->[$idx]->{name}\n";
+		print "$tracks->[$idx]->{artist}{content}\n";
+		print "$plid\n";
+	}
 }
 
 sub playlist_addTrack($$$) {
 
-	printHelp("missing parameters") if grep( /""|0/, @_);
+	printWarning("playlist_addTrack(): missing parameters") if grep( /^$|0/, @_);
 
 	(my $track, my $artist, my $plid) = @_;
 
@@ -586,9 +701,9 @@ sub playlist_addTrack($$$) {
 		}
 	}
 
-	rintHelp("No such playlist") if ($plid =~ m/0|^$/ );
-	printHelp("Bad artist name") if ($artist =~ m/^$/ );
-	printHelp("Bad track name") if ($track =~ m/^$/ );
+	printWarning("No such playlist") if (! $lfm_plid );
+	printWarning("Bad artist name") if ($artist =~ m/^$/ );
+	printWarning("Bad track name") if ($track =~ m/^$/ );
 
 
 	# fill in parameters
@@ -622,12 +737,14 @@ sub playlist_addTrack($$$) {
 
 		printf {*STDOUT} "added %s - %s to %s\n", $artist, $track,
 				$pls_ref->{$lfm_plid}{title};
+		return 0;
 
 
 	} else {
 		print STDERR $response->status_line, "\n";
 		my $error = XMLin($response->decoded_content);
 		print $error->{error}{content} . "\n";
+		return 1;
 	}
 }
 
@@ -737,13 +854,23 @@ sub getSignedMethod($){
 sub sortPlaylistByTitle($){
 	my %xml = %{ $_[0] };
 	my @ret = sort { lc($xml{$a}{title}) cmp lc($xml{$b}{title}) } keys %xml;
-	return reverse @ret if ($OPT_sort_reverse);
+	return reverse @ret if ($OPT{'reverse'});
+	return @ret;
+}
+sub sortPlaylistByTrack($){
+	my %xml = %{ $_[0] };
+	my @ret = sort { 
+		my $left  = $xml{$a}{size} || 0;
+		my $right = $xml{$b}{size} || 0;
+		$left <=> $right
+	} keys %xml;
+	return reverse @ret if ($OPT{'reverse'});
 	return @ret;
 }
 sub sortPlaylistById($){
 	my %xml = %{$_[0]};
 	my @ret = sort keys %xml;
-	return reverse @ret if ($OPT_sort_reverse);
+	return reverse @ret if ($OPT{'reverse'});
 	return @ret;
 }
 sub sortTracksByDate($) {
@@ -754,9 +881,10 @@ sub sortTracksByDate($) {
 		my $right= $in[$b]->{date}->{uts} || $now;
 		$left <=> $right 
 	} keys @in;
-	return reverse @ret if ($OPT_sort_reverse);
+	return reverse @ret if ($OPT{'reverse'});
 	return @ret;
 }
+
 sub sortTracksByArtist($) {
 	my @in = @{$_[0]};
 	my @ret = sort { 
@@ -764,7 +892,7 @@ sub sortTracksByArtist($) {
 		my $right = lc($in[$b]->{artist}{content}.$in[$b]->{name});
 		$left cmp $right 
 	} keys @in;
-	return reverse @ret if ($OPT_sort_reverse);
+	return reverse @ret if ($OPT{'reverse'});
 	return @ret;
 }
 
@@ -775,7 +903,7 @@ sub sortTracksByTitle($) {
 		my $right= lc($in[$b]->{name});
 		$left cmp $right 
 	} keys @in;
-	return reverse @ret if ($OPT_sort_reverse);
+	return reverse @ret if ($OPT{'reverse'});
 	return @ret;
 }
 

@@ -19,3 +19,4 @@ BUGS
 * add -l support for -t to work 
 * tracks -l 1 doesnt work
 * tracks upper limit 200
+* add --p ' this / that ' fails because of the / 
