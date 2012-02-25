@@ -26,7 +26,13 @@ use constant WIDTH_ARTIST	=> 43;
 use constant WIDTH_SONG		=> 23;
 use constant DEBUG			=> 1;
 
-open(CONF, "<$ENV{'HOME'}/.mpc/last.fm") or die "Did you make a session key?: cant read: $!";
+my $config_file = "$ENV{'HOME'}/.mpc/last.fm";
+
+if (-e $config_file) {
+	open(CONF, "<$config_file") or die "Did you make a session key?";
+} else {
+	printHelp("run get-session_key.sh and set \$config_file in lfm.pl");
+}
 		my @conflines = <CONF>;
 chomp( 	my $lfm_user = (split /:/, $conflines[0])[0]); 
 chomp( 	my $lfm_sk 	= (split /:/, $conflines[0])[1]); 

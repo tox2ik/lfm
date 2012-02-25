@@ -11,7 +11,8 @@ Installation
 
 Install Perl. Fetch the lfm.pl script from the above url. Chances are you 
 already have it. Invoke the script either directly or with the interpreter
-to see a description of the options.
+to see a description of the options. You will be told that you need a
+session key. run get-session_key.sh to get that.
 
 Features
 ========
