@@ -1,12 +1,28 @@
 #!/usr/bin/perl -w
+
+use constant OUTPUT_LIMIT	=> 14; # lines
+use constant WIDTH_ARTIST	=> 43; # chars
+use constant WIDTH_SONG		=> 23; 
+use constant DEBUG			=> 1;
+
+my $lfm_sk;   
+my $lfm_user;
+my $lfmrc   = "$ENV{'HOME'}/.mpc/last.fm"; # username:sessionkey
+my $apikey  = '1dfdc3a278e6bac5c76442532fcd6a05';
+my $secret	= 'a70bafc9e39612700a2c1b61b5e0ab61';
+my $service = 'http://ws.audioscrobbler.com/2.0/';
+my $httpTimeout	= 15;
+my $terminal_encoding = $ENV{'LANGUAGE'} || $ENV{'LANG'} || 'en_US.iso8859-1';
+   $terminal_encoding =~ s/\w*\.//;
+#
+# FEEL FREE TO EDIT BELOW THIS LINE
+#
 use strict;
 use warnings;
-
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
 use Encode;
 use English;
-#use File::Basename;
 use LWP::UserAgent;
 use List::Util qw[min max];
 use Switch 'Perl 6';
@@ -14,73 +30,53 @@ use Tie::File;
 use URI::QueryParam;
 use XML::Simple;
 
-#$Data::Dumper::Indent = 1;
-#$Data::Dumper::Pair = " => ";
-#use Term::ANSIColor qw(:constants);
-#$Term::ANSIColor::AUTORESET = 1;
+if (-e $lfmrc) { 
+	printHelp("run get-session_key.sh and set \$lfmrc in lfm.pl"); 
+	die "Did you make a session key?"; }
 
-
-
-use constant OUTPUT_LIMIT	=> 14; # lines
-use constant WIDTH_ARTIST	=> 43;
-use constant WIDTH_SONG		=> 23;
-use constant DEBUG			=> 1;
-
-my $config_file = "$ENV{'HOME'}/.mpc/last.fm";
-
-if (-e $config_file) {
-	open(CONF, "<$config_file") or die "Did you make a session key?";
-} else {
-	printHelp("run get-session_key.sh and set \$config_file in lfm.pl");
+while (<CONF>) {
+chomp; if (m/:/) {
+		close(CONF);
+		$lfm_user = $_ =~ s/:.*//r; 
+		$lfm_sk = $_ =~ s/.*://r;
+	}
 }
-		my @conflines = <CONF>;
-chomp( 	my $lfm_user = (split /:/, $conflines[0])[0]); 
-chomp( 	my $lfm_sk 	= (split /:/, $conflines[0])[1]); 
-close(CONF);
+if (length($lfm_user)==0 ||
+	length($lfm_sk)==0) { 
+	die "$lfmrc does not contain `user:sessionKey'"; }
 
-
-my $service				= 'http://ws.audioscrobbler.com/2.0/';
-my $apikey 				= '1dfdc3a278e6bac5c76442532fcd6a05';
-my $secret				= 'a70bafc9e39612700a2c1b61b5e0ab61';
-
-
-my $httpTimeout			= 15;
-my $terminal_encoding	= 'iso8859-1';
-#my $terminal_encoding	= 'utf8';
-#my $terminal_encoding	= 'koi8-r';
-#my %servargs			= ();
-#$servargs{api_key} 	= $apikey;
-my	$ua 				= LWP::UserAgent->new;
-	$ua->timeout( $httpTimeout);
-
-
-## 
-## FEEL FREE TO EDIT BELOW THIS LINE
-##
-
-my %cmds = (
-	add 		=> 	{ api => 'playlist.addtrack', },
-	create 		=>	{ api => 'playlist.create', },
-	love		=>	{ api => 'track.love', },
-	playlists	=>	{ api => "user.getplaylists", },
-	tracks		=>	{ api => 'user.getrecenttracks', },
-	tag			=>	{ mix => 'listtags', }
+my %commands = (
+    add       => { api => 'playlist.addtrack'   , },
+    create    => { api => 'playlist.create'     , },
+    love      => { api => 'track.love'          , },
+    playlists => { api => "user.getplaylists"   , },
+    tracks    => { api => 'user.getrecenttracks', },
+    tag       => { mix => 'listtags'            , }
+);
+my %commands_short = (
+    a => 'add',
+    c => 'create',
+    l => 'love',
+    p => 'playlists',
+    t => 'tracks',
+    T => 'tag',
 );
 
 
 parseArguments();
+die "parsed";
+
+
 binmode STDOUT, ":encoding($terminal_encoding)";
 
 sub parseArguments {
 
-	my %cmd_s2l = (
-		a => 'add',
-		c => 'create',
-		l => 'love',
-		p => 'playlists',
-		t => 'tracks',
-		T => 'tag',
-	);
+	print "$lfm_user";
+	print "$lfm_sk";
+	print "a";
+
+	die
+
 
 	# any - anything goes
 	# int - integers
@@ -147,11 +143,11 @@ sub parseArguments {
 	my %givenArgs = ();
 	my $argval_consumed = 0;
 	my $cmd = $ARGV[0] || '<none>'; 
-	   $cmd = $cmd_s2l{$cmd} || $cmd;
+	   $cmd = $commands_short{$cmd} || $cmd;
 
 	
-	printHelp("Invalid command: $cmd should be one of: @{[sort keys %cmds]}")
-		unless (grep {/^$cmd$/} (keys %cmds));
+	printHelp("Invalid command: $cmd should be one of: @{[sort keys %commands]}")
+		unless (grep {/^$cmd$/} (keys %commands));
 
 
 	# general strategy: 
@@ -276,8 +272,8 @@ sub parseArguments {
 	my %OPT = ();
 	$OPT{sk} 			= $lfm_sk;
 	$OPT{lfm_user}		= $lfm_user;
-	$OPT{mix_method}	= $cmds{$cmd}{mix} 			|| undef;
-	$OPT{api_method}	= $cmds{$cmd}{api} 			|| undef;
+	$OPT{mix_method}	= $commands{$cmd}{mix} 			|| undef;
+	$OPT{api_method}	= $commands{$cmd}{api} 			|| undef;
 	$OPT{limit}			= $givenArgs{$cmd}{'-l'}	|| OUTPUT_LIMIT;
 	$OPT{reverse} 		= $givenArgs{$cmd}{'-r'}	|| 0;
 	$OPT{pid}			= $givenArgs{$cmd}{'-p'}	|| 0;
@@ -309,6 +305,9 @@ sub parseArguments {
 ##
 ##  call the api
 ##
+
+my	$ua = LWP::UserAgent->new;
+	$ua->timeout( $httpTimeout);
 
 sub getXml_api20($){
 	use Switch 'Perl 6';
@@ -433,7 +432,7 @@ sub call_api20($){
 
 
 	my %opt_recenttracks = (
-		api_method	=> $cmds{tracks}{api},
+		api_method	=> $commands{tracks}{api},
 		limit		=> $OPT{limit},
 		page		=> $OPT{page} || 1,
 		user		=> $OPT{user} || $lfm_user,
@@ -441,7 +440,7 @@ sub call_api20($){
 		#from		=> $OPT{epoch_frome} || 0,
 	);
 	my %opt_playlists = (
-		api_method	=> $cmds{playlists}{api},
+		api_method	=> $commands{playlists}{api},
 		#limit		=> $OPT{limit},
 		page		=> $OPT{page} || 1,
 		user		=> $OPT{user} || $lfm_user,
@@ -601,7 +600,7 @@ sub call_api20($){
 		
 			#my $xmlresponse = getXmlRecentTracks();
 			my $xml		= getXml_api20({
-					api_method	=> $cmds{tracks}{api},
+					api_method	=> $commands{tracks}{api},
 					limit		=> $OPT{limit},
 					page		=> $OPT{page} || 1,
 					user		=> $OPT{user} || $lfm_user,
