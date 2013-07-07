@@ -36,7 +36,11 @@ RT=`echo $RT_RESPONSE | sed 's/.*<token>\(.*\)<\/token>.*/\1/'  `
 #
 if [ `echo $RT | grep -qE "[a-z0-9]{32}"; echo $? ` -eq 0 ];then
 
-	$MYBROWSER "http://www.last.fm/api/auth/?api_key=$APIKEY&token=$RT"
+	if [ -x "$MYBROWSER" ] && [ -n "$DISPLAY" ]; then
+		$MYBROWSER "http://www.last.fm/api/auth/?api_key=$APIKEY&token=$RT"
+	else
+		echo look here: "http://www.last.fm/api/auth/?api_key=$APIKEY&token=$RT"
+	fi
 
 	while [ "$CONTINUE" != "yes" ];do 
 		read -p "done in $MYBROWSER?: " CONTINUE
