@@ -17,300 +17,265 @@ my $terminal_encoding = $ENV{'LANGUAGE'} || $ENV{'LANG'} || 'en_US.iso8859-1';
 #
 # FEEL FREE TO EDIT BELOW THIS LINE
 #
+binmode STDOUT, ":encoding($terminal_encoding)";
 use strict;
 use warnings;
+use v5.10;
+
+sub call_api20($);
+sub printError($$$);
+
+if (-e ! $lfmrc) { 
+	printHelp("run get-session_key.sh and set \$lfmrc in lfm.pl"); 
+	die "Did you make a session key?"; }
+
+open(CONF, "<$lfmrc") or die "file?";
+while (<CONF>) {
+	chomp; if (/:/) {
+	$lfm_user = $_; $lfm_user = $lfm_user =~ s/:.*//; 
+	$lfm_sk = $_; $lfm_sk = $lfm_sk =~ s/.*://;
+	}} close(CONF);
+
+if (length($lfm_user)==0 or
+	length($lfm_sk)==0) { 
+	die "$lfmrc does not contain `user:sessionKey'"; }
+
+my %args_short = (
+ '-a'  => {'add'=>'s', 'tag'=>'s' ,              'love'=>'s',                                            }, 
+ '-A'  => {            'tag'=>'s'                                                                        },
+ '-d'  => {                        'create'=>'s'                                                         }, 
+ '-l'  => {'add'=>'i', 'tag'=>'i',               'love'=>'i', 'playlists'=>'i',     'tracks'=>'i'        }, 
+ '-n'  => {                        'create'=>'s'                                                         }, 
+ '-p'  => {'add'=>'i'                                                                                    }, 
+ '-r'  => {            'tag'=>'n',               'love'=>'n', 'playlists'=>'n',     'tracks'=>'n'        }, 
+ '-s'  => {                                                   'playlists'=>'{ITt}', 'tracks'=>'{ItA}'    }, 
+ '-t'  => {'add'=>'i', 'tag'=>'i',               'love'=>'i'                                             },
+ ); my %args_sshort = (
+ '-ol' => {            'tag'=>'i'                                                                        },
+ '-ta' => {            'tag'=>'s'                                                                        }, 
+ '-tA' => {            'tag'=>'s'                                                                        },
+ '-tt' => {            'tag'=>'s'                                                                        },
+ '-ls' => {            'tag'=>'n'                                                                        },
+ ); my %args_long = (
+'--t'  => {'add'=>'s',      'tag'=>'s',         'love'=>'s'                                              },
+'--p'  => {'add'=>'s'                                                                                    }, 
+);
+my @all_possible_args = (keys %args_long, keys %args_sshort, keys %args_short);
+my @all_singlechar_args = (keys %args_long, keys %args_short);
+my %commands = (
+	'add'       => { api => 'playlist.addtrack'   , },
+	'create'    => { api => 'playlist.create'     , },
+	'love'      => { api => 'track.love'          , },
+	'playlists' => { api => "user.getplaylists"   , },
+	'tracks'    => { api => 'user.getrecenttracks', },
+	'tag'       => { mix => 'listtags'            , }
+); my %commands_short = (
+	a => 'add',
+	c => 'create',
+	l => 'love',
+	p => 'playlists',
+	t => 'tracks',
+	T => 'tag',
+); my %argvalues = ( 
+	'n' => 'None',
+	's' => 'String',
+	'i' => 'Number',
+	'I' => 'ID',
+	't' => 'Track',
+	'T' => 'Title',
+	'A' => 'Artist'
+);
+my %cliargs; #<- sub parse_options
+my $command; #<- sub determined_mode
+my $invalid='~'; #<- sub option_type_in_mode.
+                 #   means illegal option value for mode (ie. add -t zebra, 
+				 #   because -t takes an int).
+
+sub determined_mode {
+	for (my $i=0; $i<scalar @ARGV; $i++) {
+		if (grep { $_ eq $ARGV[$i]} (keys %commands, keys %commands_short)) {
+			if  ($i eq 0) { return splice @ARGV, $i, 1; }
+			return $ARGV[$i] }}}
+
+sub option_type_in_mode($$){
+	my ($opt, $mode) = @_;
+	my (%argsa, $type);
+	@argsa{keys %args_short} = values %args_short;
+	@argsa{keys %args_sshort} = values %args_sshort;
+	@argsa{keys %args_long} = values %args_long;
+	$mode = $commands_short{$mode} || $mode;
+	if (defined($argsa{$opt}{$mode})) { # check if opion is defind in current mode
+		return $argsa{$opt}{$mode}; }
+	return $invalid; }
+
+sub parse_options() {
+	my %options = ();
+	my ($a, $v, $optim, $optval, $applicable);
+	my $re_single = sprintf '^(%s)(.*)$', join('|', @all_singlechar_args);
+	my $re_double = sprintf '^(%s)(.*)$', join('|', (keys %args_sshort) );
+
+	# set minus set : @all_possible_args - @all_singlechar_args
+	# my %singlechar = map { $_ => 1} @all_singlechar_args;
+    # my @all_doublechar_args = grep { not $singlechar{$_} } @all_possible_args;
+	# my $re_double = sprintf '^(%s)(.*)$', join('|', @all_doublechar_args );
+	
+	while (scalar @ARGV > 0) {
+		$a = splice @ARGV, 0, 1;
+		$applicable = option_type_in_mode($a, $command) ne $invalid;
+
+		# -a Nick, -t Wepping\ Song -p 'Rock & Roll'
+		if (grep { $_ eq $a} @all_possible_args and  $applicable) {
+			$v = splice @ARGV, 0, 1;
+		    $v = $v || $invalid;
+			#printf "# %s -> %s: %s\n", $a, $optim, $v;
+
+			$optim = option_type_in_mode($a, $command);
+			if ($optim eq 'n') {
+				splice @ARGV, 0, 0, ($v) unless $v eq $invalid;
+				$options{$a} = [$optim => 0xc0ffee];
+
+			} elsif (not grep { $_ eq $v} ($invalid, @all_possible_args)) { # "value" == -f ?
+				$options{$a} = [$optim => $v];
+
+			} elsif (defined($argvalues{$optim}) and  $argvalues{$optim} eq 'None') {
+				$options{$a} = [$optim => 0xc0ffee];
+
+			} else {
+				# split {ItA} into "it|track|artist"
+				if ($optim =~ /^{(.*)}$/) {
+					my %optlist = map { $_ => $argvalues{$_} } split(//, $1);
+					$optim = join('|', values %optlist );
+				} else {
+					$optim = $argvalues{$optim};
+				}
+				printf "The option %s takes a value of type '%s' in %s mode.\n", $a, $optim, $command;
+				exit 1;
+			}
+
+		# -aNick, -t'Weeping Song', -pRock\ "& Roll"
+		} elsif (
+				(($a =~ /$re_double/) or
+				 ($a =~ /$re_single/))
+				and option_type_in_mode($1, $command) ne $invalid) {
+			($a, $v) = ($1, $2);
+
+			$optim = option_type_in_mode($a, $command);
+
+			if ($optim eq 'n') {
+				splice @ARGV, 0, 0, ($v) unless $v eq $invalid;
+				$options{$a} = [$optim => 0xc0ffee];
+			} else {
+				$options{$a} = [$optim => $v];
+			}
+
+			#printf "# %3s -> %s: %s\n", $a, option_type_in_mode($a, $command), $v;
+
+		} elsif (grep { $_ eq $a} @all_possible_args) {
+			printf "The command '%s' does not take the option -- '%s'\n", $command, $a;
+			exit 1;
+		} else {
+			#printf "'%s' applicable in '%s': >%s<\n", $a, $applicable, $command;
+			printf "Illegal option -- '%s'\n", $a;
+			exit 1;
+		}
+		#$argc--;
+	}
+	return %options;
+}
+
+
+$command = determined_mode(@ARGV);
+$command = $commands_short{$command} || $command || '$1';
+%cliargs = parse_options();
+my $badexit = 1;
+my $pebkacExit = 2;
+#die "parsed";
+
+
+#printf "# command: %s; (%s)\n", $command, join(", ", @ARGV);
+
+#
+# Check input
+#
+	#todo push @arr, splice @arr, 0, 1;
+	printHelp("Invalid command.",
+		"$command should be one of: @{ [sort (keys %commands, keys %commands_short) ] }",
+		$badexit)
+	unless (grep {/^$command$/} (keys %commands, keys %commands_short));
+
+# assert value type
+my %givenArgs;
+while ((my $flag, my $value) = each (%cliargs)){
+	my $valueType = @$value[0];
+	my $parameter = @$value[1];
+	printf "got %3s (%s): %-40s \n", $flag, $valueType, $parameter;
+
+	if	($valueType eq 'i') {
+	printError('Wrong parameter.', "$command $flag n must be an integer (tID)", $pebkacExit)
+	unless ($parameter =~ m/^\d+$/); 
+
+		$givenArgs{$command}{$flag} = int $parameter;
+
+	} else {
+
+		$givenArgs{$command}{$flag} = 1; 
+	}
+}
+
+
+my %OPT = ();
+$OPT{sk} 			= $lfm_sk;
+$OPT{lfm_user}		= $lfm_user;
+$OPT{mix_method}	= $commands{$command}{mix}	|| undef;
+$OPT{api_method}	= $commands{$command}{api}	|| undef;
+$OPT{limit}			= $givenArgs{$command}{'-l'}	|| OUTPUT_LIMIT;
+$OPT{reverse} 		= $givenArgs{$command}{'-r'}	|| 0;
+$OPT{pid}			= $givenArgs{$command}{'-p'}	|| 0;
+$OPT{playlist}		= $givenArgs{$command}{'--p'}	|| "";
+$OPT{tid}			= $givenArgs{$command}{'-t'}	|| 0;
+$OPT{artist}		= $givenArgs{$command}{'-a'}	|| "";
+$OPT{album}			= $givenArgs{$command}{'-A'}	|| "";
+$OPT{track}			= $givenArgs{$command}{'--t'}	|| "";
+$OPT{name}			= $givenArgs{$command}{'-n'}	|| "";
+$OPT{description}	= $givenArgs{$command}{'-d'}	|| "";
+$OPT{order_by}		= $givenArgs{$command}{'-s'}	|| "";
+$OPT{output_limit}	= $givenArgs{$command}{'-ol'}	|| 20; # max 100 tags
+$OPT{tag_artist}	= $givenArgs{$command}{'-ta'}	|| "";
+$OPT{tag_album}		= $givenArgs{$command}{'-tA'}	|| "";
+$OPT{tag_track}		= $givenArgs{$command}{'-tt'}	|| "";
+# --
+
+
+#
+# The rest is magic
+#
+
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
 use Encode;
-use English;
+#use English;
 use LWP::UserAgent;
 use List::Util qw[min max];
-use Switch 'Perl 6';
+#use Switch 'Perl 6';
 use Tie::File; 
 use URI::QueryParam;
 use XML::Simple;
 
-if (-e $lfmrc) { 
-	printHelp("run get-session_key.sh and set \$lfmrc in lfm.pl"); 
-	die "Did you make a session key?"; }
-
-while (<CONF>) {
-chomp; if (m/:/) {
-		close(CONF);
-		$lfm_user = $_ =~ s/:.*//r; 
-		$lfm_sk = $_ =~ s/.*://r;
-	}
-}
-if (length($lfm_user)==0 ||
-	length($lfm_sk)==0) { 
-	die "$lfmrc does not contain `user:sessionKey'"; }
-
-my %commands = (
-    add       => { api => 'playlist.addtrack'   , },
-    create    => { api => 'playlist.create'     , },
-    love      => { api => 'track.love'          , },
-    playlists => { api => "user.getplaylists"   , },
-    tracks    => { api => 'user.getrecenttracks', },
-    tag       => { mix => 'listtags'            , }
-);
-my %commands_short = (
-    a => 'add',
-    c => 'create',
-    l => 'love',
-    p => 'playlists',
-    t => 'tracks',
-    T => 'tag',
-);
 
 
-parseArguments();
-die "parsed";
+#
+# Call the API
+#
 
-
-binmode STDOUT, ":encoding($terminal_encoding)";
-
-sub parseArguments {
-
-	print "$lfm_user";
-	print "$lfm_sk";
-	print "a";
-
-	die
-
-
-	# any - anything goes
-	# int - integers
-	# []  - list of possible values
-	my %args = (
-	 '-a' => {	add=>	'any', 
-				love=>	'any',				
-				tag=>	'any',
-											}, 
-	 '-A' => {	tag=>	'any'
-	 										},
-	 '-d' => {	create=>'any' 				}, 
-	 '-l' => {	add =>		'int', 
-		 		love=>		'int', 
-				playlists=>	'int',
-				tag=>		'int',
-				tracks=>	'int',			
-											}, 
-	 '-ol'=> {  tag=>		'int',			},
-	 '-n' => {	create=>	'any' 			}, 
-	 '-p' => {	add=>		'int'			}, 
-	'--p' => {	add=>		'any'			}, 
-	 '-r' => {	love=>		'na',
-		 		playlists=>	'na', 
-				tag=>		'na',
-				tracks=>	'na'	}, 
-	 '-s' => {	playlists=>	['id','title','track'], 
-		 		track=>		['id','track','artist'] }, 
-	 '-t' => {	add=>		'int',
-		 		love=>		'int',			
-				tag=>		'int',
-											},
-	 '-ta' => {	tag=>		'any', 			},
-	 '-tA' => {	tag=>		'any', 			},
-	 '-tt' => {	tag=>		'any', 			},
-
-	'--t' => { 	add=>	'any',
-				love=>	'any',
-				tag=>	'any',
-											},
-
-	 #'--' => { playlists=>'filter' }, 
-	 #'-x' => { add=>'any'}, 
-	 #'-y' => { add=>'any'}, 
-	 #'-f' => { add=>'any'}, 
-	 #'-g' => { add=>'any'}, 
-	 #'-c' => { add=>'any'}, 
-	);
-
-
-	my %xargs = (
-		add	=>	{
-					'-p' => [[ '--p' ]],
-					'-t' => [[ '--t' ]],
-					'-a' => [['-t']],
-				},
-		love => {
-					'-t' => [[ '--t' ]],
-					'-a' => [['-t']],
-				}
-		#tracks => 
-	);
-	my $argc = @ARGV;
-	my %givenArgs = ();
-	my $argval_consumed = 0;
-	my $cmd = $ARGV[0] || '<none>'; 
-	   $cmd = $commands_short{$cmd} || $cmd;
-
-	
-	printHelp("Invalid command: $cmd should be one of: @{[sort keys %commands]}")
-		unless (grep {/^$cmd$/} (keys %commands));
-
-
-	# general strategy: 
-	#  check that -arg is in %args
-	#  check that command is a key in the '-a' hash or %args
-	#    find out what kind of value -arg takes (int/any/list)
-	#      print help or assign value 
-
-	while ($argc > 1) {
-
-		$a = splice @ARGV, 1, 1;
-		$argc--;
-
-		my $arg_ref		= $args{$a};
-		my @modes4arg	= keys %$arg_ref;
-		my $a_ref		= \$args{$a}{$cmd}; 		# -r -> add -> any
-		#my $ga_ref		= \$givenArgs{$a}{$cmd};	# checked arguments
-		my $argval		= utf8_value($ARGV[1], $terminal_encoding) || \\0;
-		my $mode_arg	= grep {/$cmd/} @modes4arg;
-
-
-
-		printHelp("Invalid argument: $a") unless grep /$a/, %args;
-		printError("Invalid argument: command $cmd does not take argument $a") 
-			unless $mode_arg;
-
-		$argval_consumed = 1;
-
-		if	($$a_ref eq 'any') {
-			printHelp("argument $_[0] needs a value") 
-				unless ref $argval ne 'REF';
-
-			$givenArgs{$cmd}{$a} = $argval;
-
-		} elsif	($$a_ref eq 'int') {
-			printError( "$cmd $a n must be an integer (tID)") 
-				unless ( ref $argval ne 'REF' && 
-					$argval =~ m/^\d+$/ );
-
-			$givenArgs{$cmd}{$a} = int $argval;
-
-		} elsif	(ref $$a_ref eq 'ARRAY' ) {
-			printHelp("$cmd $a must be one of: @{$$a_ref}") 
-				unless (grep {/$argval/} @{$$a_ref} );
-
-			$givenArgs{$cmd}{$a} = $argval; 
-
-		} elsif	($$a_ref eq 'filter') {
-
-			# TODO make filters work
-			$givenArgs{$cmd}{$a} .= $argval; 
-
-		} else {
-
-			$givenArgs{$cmd}{$a} = 1; 
-			$argval_consumed = 0;
-		}
-
-		if ($argval_consumed) { 
-			my $cut = splice(@ARGV, 1, 1);
-			$argc--;
-			$argval_consumed = 0;
-		}
-	}
-
-
-#	#print Dumper( %givenArgs);
-#	foreach my $key (keys %givenArgs) {
-#		foreach my $mode (keys %{$givenArgs{$key}}){
-#			my $val = $givenArgs{$key}{$mode} || 1;
-#			print "$key\t- $mode\t- $val \n";
-#		}
-#	}
-
-	# verify that no conflicting arguments are given
-	foreach my $a (keys %{$givenArgs{$cmd}}){
-		my $nocrash = 1; # todo - maybe cycle through everything and collect all
-						 # errors instead of exiting on 1st found
-		my $cxalr 		= $xargs{$cmd} || {};
-		my %cmd_xargs	= %$cxalr;
-		my @cakeys		= keys %cmd_xargs;
-		my $cakidx		= 0;
-			my $lists;
-			my $lidx;
-				my @list;
-				my $single;
-				my $combined;
-					my $alltrue;
-					my $comidx;
-		if ($xargs{$cmd}{$a}) {
-			while ($nocrash && $cakidx < scalar @cakeys ){
-				if ( $a ne $cakeys[$cakidx]) { $cakidx++; next; }
-				$lists 		= $cmd_xargs{$cakeys[$cakidx++]};
-				$lidx 		= 0;
-				while ($nocrash && $lidx < scalar @$lists) { 
-					@list 		= @{ $lists->[$lidx++] };
-					$single		= scalar (@list) == 1;
-					$combined	= scalar (@list) >  1;
-					if (grep {/^$a$/} @list) { 
-						next; 
-					} else {
-						if ($combined) {
-							$alltrue	= 1;
-							$comidx 	= 0;
-							while ($alltrue && $comidx < scalar @list){
-								$alltrue = 
-								$alltrue && $givenArgs{$cmd}{$list[$comidx]};
-								$comidx++; }
-							printError("$cmd $a: invalid argument combination @list")
-							if ($alltrue) 
-
-						} elsif ($single) {
-							printError("$cmd $a: invalid argument combination $list[0]")
-							if ($givenArgs{$cmd}{$list[0]});
-						}
-					}
-				}
-			}
-		} 
-	}
-
-	my %OPT = ();
-	$OPT{sk} 			= $lfm_sk;
-	$OPT{lfm_user}		= $lfm_user;
-	$OPT{mix_method}	= $commands{$cmd}{mix} 			|| undef;
-	$OPT{api_method}	= $commands{$cmd}{api} 			|| undef;
-	$OPT{limit}			= $givenArgs{$cmd}{'-l'}	|| OUTPUT_LIMIT;
-	$OPT{reverse} 		= $givenArgs{$cmd}{'-r'}	|| 0;
-	$OPT{pid}			= $givenArgs{$cmd}{'-p'}	|| 0;
-	$OPT{playlist}		= $givenArgs{$cmd}{'--p'}	|| "";
-	$OPT{tid}			= $givenArgs{$cmd}{'-t'}	|| 0;
-	$OPT{artist}		= $givenArgs{$cmd}{'-a'}	|| "";
-	$OPT{album}			= $givenArgs{$cmd}{'-A'}	|| "";
-	$OPT{track}			= $givenArgs{$cmd}{'--t'}	|| "";
-	$OPT{name}			= $givenArgs{$cmd}{'-n'}	|| "";
-	$OPT{description}	= $givenArgs{$cmd}{'-d'}	|| "";
-	$OPT{order_by}		= $givenArgs{$cmd}{'-s'}	|| "";
-	$OPT{output_limit}	= $givenArgs{$cmd}{'-ol'}	|| 20; # max 100 tags
-	$OPT{tag_artist}	= $givenArgs{$cmd}{'-ta'}	|| "";
-	$OPT{tag_album}		= $givenArgs{$cmd}{'-tA'}	|| "";
-	$OPT{tag_track}		= $givenArgs{$cmd}{'-tt'}	|| "";
-	
-	#given ($cmd) {
-	#when "add"		{ call_api20(\%OPT); }
-	#when "create"	{ call_api20(\%OPT); }
-	#when "love"		{ call_api20(\%OPT); }
-	#when "playlists"{ call_api20(\%OPT); }
-	#when "tracks"	{ call_api20(\%OPT); }
-	#}
-
-	call_api20(\%OPT);
-	exit -1;
-}
-
-##
-##  call the api
-##
-
-my	$ua = LWP::UserAgent->new;
+my	$ua;
+	$ua = LWP::UserAgent->new;
 	$ua->timeout( $httpTimeout);
 
+call_api20(\%OPT);
+exit -1;
+
 sub getXml_api20($){
-	use Switch 'Perl 6';
+	#use Switch 'Perl 6';
 	
 	my %OPT 		= %{ $_[0] };
 	my $method 		= $OPT{api_method};
@@ -326,78 +291,75 @@ sub getXml_api20($){
 		$servargs{sk}	= $lfm_sk;
 	}
 
-	given ($method){
-		when "user.getrecenttracks" {
 
-			$servargs{method}	= $method;
-			$servargs{limit}	= $OPT{'limit'};
-			$servargs{page}		= "1";
-			$servargs{user}		= $lfm_user;
-			#$servargs{from}	= `epoch`;
-			#$servargs{to}		= `epoch`;
+	if ($method eq "user.getrecenttracks") {
 
-			@xmlargs = (keyattr => {}, forcearray => 0);
-		}
+		$servargs{method}	= $method;
+		$servargs{limit}	= $OPT{'limit'};
+		$servargs{page}		= "1";
+		$servargs{user}		= $lfm_user;
+		#$servargs{from}	= `epoch`;
+		#$servargs{to}		= `epoch`;
 
-		when "user.getplaylists" {
+		@xmlargs = (keyattr => {}, forcearray => 0);
+	}
 
-			$servargs{method}	= $method;
-			$servargs{user}		= $lfm_user;
-			$servargs{page}		= "1";
-			#$servargs{from}        = `epoch`;
-			#$servargs{to}          = `epoch`;
+	elsif ($method eq "user.getplaylists") {
 
-			@xmlargs = (forcearray=>0);
-		}
-		when "artist.gettoptags" {
-			$servargs{method}	= $method;
-			$servargs{artist}	= $OPT{'artist'};
-			$servargs{autocorrect} = 1;
-			#$mbid				= $OPT{mbid}
-		}
+		$servargs{method}	= $method;
+		$servargs{user}		= $lfm_user;
+		$servargs{page}		= "1";
+		#$servargs{from}        = `epoch`;
+		#$servargs{to}          = `epoch`;
 
-		when "album.gettoptags" {
-			$servargs{method}	= $method;
-			$servargs{artist}	= $OPT{'artist'};
-			$servargs{album}	= $OPT{'album'};
-			$servargs{autocorrect} = 1;
-			#$mbid				= $OPT{mbid}
+		@xmlargs = (forcearray=>0);
+	}
+	elsif ($method eq "artist.gettoptags") {
+		$servargs{method}	= $method;
+		$servargs{artist}	= $OPT{'artist'};
+		$servargs{autocorrect} = 1;
+		#$mbid				= $OPT{mbid}
+	}
 
-		}
-		when "track.gettoptags" {
-			$servargs{method}	= $method;
-			$servargs{artist}	= $OPT{'artist'};
-			$servargs{track}	= $OPT{'track'};
-			$servargs{autocorrect} = 1;
-			#$mbid				= $OPT{mbid}
-		}
+	elsif ($method eq "album.gettoptags") {
+		$servargs{method}	= $method;
+		$servargs{artist}	= $OPT{'artist'};
+		$servargs{album}	= $OPT{'album'};
+		$servargs{autocorrect} = 1;
+		#$mbid				= $OPT{mbid}
 
-		when "artist.gettags" {
-			$servargs{method}	= $method;
-			$servargs{artist}	= $OPT{'artist'};
-			$servargs{autocorrect} = 1;
-			#$mbid				= $OPT{mbid}
-		}
+	}
+	elsif ($method eq "track.gettoptags") {
+		$servargs{method}	= $method;
+		$servargs{artist}	= $OPT{'artist'};
+		$servargs{track}	= $OPT{'track'};
+		$servargs{autocorrect} = 1;
+		#$mbid				= $OPT{mbid}
+	}
 
-		when "album.gettags" {
-			$servargs{method}	= $method;
-			$servargs{artist}	= $OPT{'artist'};
-			$servargs{album}	= $OPT{'album'};
-			$servargs{autocorrect} = 1;
-			#$mbid				= $OPT{mbid}
+	elsif ($method eq "artist.gettags") {
+		$servargs{method}	= $method;
+		$servargs{artist}	= $OPT{'artist'};
+		$servargs{autocorrect} = 1;
+		#$mbid				= $OPT{mbid}
+	}
 
-		}
-		when "track.gettags" {
-			$servargs{method}	= $method;
-			$servargs{artist}	= $OPT{'artist'};
-			$servargs{track}	= $OPT{'track'};
-			$servargs{autocorrect} = 1;
-			#$mbid				= $OPT{mbid}
-		}
+	elsif ($method eq "album.gettags") {
+		$servargs{method}	= $method;
+		$servargs{artist}	= $OPT{'artist'};
+		$servargs{album}	= $OPT{'album'};
+		$servargs{autocorrect} = 1;
+		#$mbid				= $OPT{mbid}
 
-		default {
-			printError("Routine for fetching xml ($method) is not defined ");
-		}
+	}
+	elsif ($method eq "track.gettags") {
+		$servargs{method}	= $method;
+		$servargs{artist}	= $OPT{'artist'};
+		$servargs{track}	= $OPT{'track'};
+		$servargs{autocorrect} = 1;
+		#$mbid				= $OPT{mbid}
+	} else {
+		printError('Missing Arguments', "Routine for fetching xml ($method) is not defined ", $pebkacExit);
 	}
 
 	my $response = getResponse(\%servargs, 'utf8');
@@ -414,9 +376,8 @@ sub getXml_api20($){
 
 
 
-sub call_api20($);
 sub call_api20($){
-	use Switch 'Perl 6';
+		#use Switch 'Perl 6';
 	my %OPT = %{ $_[0] };
 	my %servargs = ();
 
@@ -428,8 +389,6 @@ sub call_api20($){
 	if (requires_authentication($method)){
 		$servargs{sk}	= $lfm_sk;
 	}
-
-
 
 	my %opt_recenttracks = (
 		api_method	=> $commands{tracks}{api},
@@ -506,332 +465,302 @@ sub call_api20($){
 	}
 
 
-	given ($servargs{method}) {
-		when "track.love" { 	
+	my $call = $servargs{method};
 
-			if ($OPT{reverse} == 1){
-				$servargs{method} = 'track.unlove';
+	if ($call eq "track.love") {
+
+		if ($OPT{reverse} == 1){
+			$servargs{method} = 'track.unlove';
+		}
+
+	} elsif ($call eq "playlist.create") {
+
+		$servargs{title}		= $OPT{name};
+		$servargs{description}	= $OPT{description};
+
+	} elsif ($call eq "playlist.addtrack") {
+		# map --p or -p to a playlist id
+		my $xml_p	= getXml_api20(\%opt_playlists);
+		my $pls_ref	= $xml_p->{playlists}->{playlist};
+		my $idlist_p= mapPlaylistIds($pls_ref);
+		my $lfm_plid= 0;
+
+		if ($OPT{pid} !=0) {
+			while ( ((my $lfmid, my $lsid) = each %$idlist_p) && ! $lfm_plid){
+				if ($OPT{pid} == $lsid) {
+					$lfm_plid = $lfmid;
+					$OPT{playlist} = $pls_ref->{$lfmid}->{title};
+				}
 			}
+		} elsif ($OPT{playlist} ne "") {
+			my $andexpr = "";
+			my %found =();
+			foreach (split /\s+/, $OPT{playlist} ){
+				$andexpr = $andexpr . "/$_/ && "; 
+			} 	$andexpr =~ s/&&\s?\z//;
+				$andexpr =~ s,^$,/.*/,;
+
+			foreach my $pls_id (keys %$pls_ref){
+				my $pls_name = $pls_ref->{$pls_id}->{title};
+				if (grep {eval $andexpr} $pls_name){
+					$found{$idlist_p->{$pls_id}} = $pls_name;
+					$lfm_plid = $pls_id;
+					$OPT{playlist} = $pls_name;
+				}
+			}
+			if ((scalar keys %found) >= 2 ){
+				print STDERR "add $OPT{artist} - $OPT{track}\nto which playlist?\n";
+				my $format = "% 4s %s\n";
+					printf STDERR $format, "id", "name";
+				foreach (sort {$found{$a} cmp $found{$b} } keys %found){ 
+					printf $format, $_, $found{$_}; }
+				return 1;
+			 }
+		} 
+
+		printWarning("No such playlist") if (! $lfm_plid );
+		printWarning("Bad artist name") if ($servargs{artist} =~ m/^$/ );
+		printWarning("Bad track name") if ($servargs{track} =~ m/^$/ );
+
+		$servargs{playlistID}	= $lfm_plid;
+
+	} elsif ($call eq "user.getplaylists") {
+
+		#my $xml 	= getXml_api20("user.getplaylists");
+		my $xml 	= getXml_api20(\%OPT);
+		my $pls_ref	= $xml->{playlists}->{playlist};
+		my %pls		= %{ $pls_ref };
+		my $idlist  = mapPlaylistIds($pls_ref);
+		my $format	= "% 6s % 3s  %s \n";
+		my $sort_sub= \&sortPlaylistByTitle;
+		if ($OPT{order_by} eq "id" ){
+			$sort_sub = \&sortPlaylistById
+		} 
+		elsif ($OPT{order_by} eq "track" ) {
+			$sort_sub = \&sortPlaylistByTrack
 		}
 
-		when "playlist.create" {
+			printf {*STDOUT}  $format, "len", "pID", "Playlist" ; 
+		foreach my $id ( $sort_sub->( $pls_ref, $OPT{reverse})) { 
+			printf {*STDOUT}  $format, 
+			$pls{$id}{size},
+			$idlist->{$id}, 
+			$pls{$id}{title} ; 
+		}
+		return 0;
 
-			$servargs{title}		= $OPT{name};
-			$servargs{description}	= $OPT{description};
+	} elsif ($call eq "user.getrecenttracks") {
+		my $maxa = 0;
+		my $maxt = 0;
+		my $maxid = 2 +(length $OPT{'limit'});
+	
+		#my $xmlresponse = getXmlRecentTracks();
+		my $xml		= getXml_api20({
+				api_method	=> $commands{tracks}{api},
+				limit		=> $OPT{limit},
+				page		=> $OPT{page} || 1,
+				user		=> $OPT{user} || $lfm_user,
+				#to			=> $OPT{epoch_to} || 0,
+				#from		=> $OPT{epoch_frome} || 0,
+			});
+		my $tracks	= $xml->{recenttracks}{track} ;
+		my @tracks	= @{ $tracks };
+		my $sort_sub= \&sortTracksByDate;
+		my $idlist	= mapTrackIds($tracks);
+		my $format	= 
+			"% ".$maxid."s %02s:%02s % ".$maxa."s - %- ".$maxt."s\n";
+
+		if (		$OPT{order_by} eq 'title' ) {
+			$sort_sub = \&sortTracksByTitle 
+		} elsif (	$OPT{order_by} eq 'artist' ) {
+			$sort_sub = \&sortTracksByArtist 
 		}
 
-		when "playlist.addtrack" {
-			# map --p or -p to a playlist id
-			my $xml_p	= getXml_api20(\%opt_playlists);
-			my $pls_ref	= $xml_p->{playlists}->{playlist};
-			my $idlist_p= mapPlaylistIds($pls_ref);
-			my $lfm_plid= 0;
+		my @sorted	= $sort_sub->($tracks, $OPT{reverse});
+	
+		#find longest name or title
+		foreach (@tracks){
+			my $name 	= $_->{name};
+			my $artist	= $_->{artist}->{content};
+			$maxa = max(length($artist), $maxa);
+			$maxt = max(length($name), $maxt); }
+			$maxa = min(WIDTH_ARTIST, $maxa);
+			$maxt = min(WIDTH_SONG, $maxt);
+			$maxt += 4-($maxid);
+	
+	
+			printf {*STDERR}  $format, 
+				"tID", "hh", "mm", 
+				"Artist", "Track";
+	
+		foreach (@sorted){
+	
+			my $trk		= $tracks[$_];
+			my $epoch	= $trk->{date}->{uts} || time;
+			my $name 	= $trk->{name};
+			my $artist	= $trk->{artist}->{content};
+	
+			#my ($sec, $min, $hour, $day,$month,$year) = 
+			#	(localtime($epoch))[0,1,2,3,4,5,6]; 
+			my ($min,$hour) = (localtime($epoch))[1,2] ;
+	
+			printf {*STDOUT} $format, 
+				$idlist->{$_}, $hour, $min, 
+				$artist, $name;
+		}
+		return 0;
+	} elsif ($call eq "listtags") {
+		sub printTags($$$$){
+			my $prefix		= 	$_[0];
+			my $command		= 	$_[1];
+			my %opt_toptags = %{$_[2]};
+			my %OPT			= %{$_[3]};
+			my $tagsfor		= $OPT{$prefix};
 
-			if ($OPT{pid} !=0) {
-				while ( ((my $lfmid, my $lsid) = each %$idlist_p) && ! $lfm_plid){
-					if ($OPT{pid} == $lsid) {
-						$lfm_plid = $lfmid;
-						$OPT{playlist} = $pls_ref->{$lfmid}->{title};
+			my @ordered = ();
+			my %tags	= ();
+			my $xml		= ();
+			my $max		= 0;
+			my $line	= 0;
+			my $onetoptag =	0;
+			my $appliedtags = 0;
+
+			$opt_toptags{api_method} = "$prefix.$command";
+			$xml		= getXml_api20(\%opt_toptags);
+
+			if ($command eq 'gettoptags'){
+				print "$prefix: $tagsfor\n    ";
+			}
+			if ($xml != -1) {
+				if      (defined $xml->{toptags}{tag}) {
+					%tags 	= %{ $xml->{toptags}{tag}};
+				} elsif (defined $xml->{tags}{tag}) {
+					%tags 	= %{ $xml->{tags}{tag}};
+					$appliedtags = 1;
+					#print Dumper ($xml);
+
+				} else {
+					if ($command eq 'gettoptags'){
+						print "No tags";
 					}
 				}
-			} elsif ($OPT{playlist} ne "") {
-				my $andexpr = "";
-				my %found =();
-				foreach (split /\s+/, $OPT{playlist} ){
-					$andexpr = $andexpr . "/$_/ && "; 
-				} 	$andexpr =~ s/&&\s?\z//;
-					$andexpr =~ s,^$,/.*/,;
 
-				foreach my $pls_id (keys %$pls_ref){
-					my $pls_name = $pls_ref->{$pls_id}->{title};
-					if (grep {eval $andexpr} $pls_name){
-						$found{$idlist_p->{$pls_id}} = $pls_name;
-						$lfm_plid = $pls_id;
-						$OPT{playlist} = $pls_name;
-					}
+				my $onetoptag =	exists $tags{count} && 
+				 				exists $tags{name} && 
+				 				exists $tags{url};
+
+				if ($onetoptag){
+					$ordered[0] = $tags{name};
+				} elsif ($appliedtags) {
+					print "    Saved:\n    ";
+					@ordered 	= sort keys %tags;
+				} else {
+					@ordered	= sort { 
+						$tags{$b}{count}
+						<=>
+						$tags{$a}{count}
+					} keys %tags;
 				}
-				if ((scalar keys %found) >= 2 ){
-					print STDERR "add $OPT{artist} - $OPT{track}\nto which playlist?\n";
-					my $format = "% 4s %s\n";
-						printf STDERR $format, "id", "name";
-					foreach (sort {$found{$a} cmp $found{$b} } keys %found){ 
-						printf $format, $_, $found{$_}; }
-					return 1;
-				 }
-			} 
-
-			printWarning("No such playlist") if (! $lfm_plid );
-			printWarning("Bad artist name") if ($servargs{artist} =~ m/^$/ );
-			printWarning("Bad track name") if ($servargs{track} =~ m/^$/ );
-
-			$servargs{playlistID}	= $lfm_plid;
-		}
-
-		when "user.getplaylists" {
-
-			#my $xml 	= getXml_api20("user.getplaylists");
-			my $xml 	= getXml_api20(\%OPT);
-			my $pls_ref	= $xml->{playlists}->{playlist};
-			my %pls		= %{ $pls_ref };
-			my $idlist  = mapPlaylistIds($pls_ref);
-			my $format	= "% 6s % 3s  %s \n";
-			my $sort_sub= \&sortPlaylistByTitle;
-			if ($OPT{order_by} eq "id" ){
-				$sort_sub = \&sortPlaylistById
-			} 
-			elsif ($OPT{order_by} eq "track" ) {
-				$sort_sub = \&sortPlaylistByTrack
-			}
-
-				printf {*STDOUT}  $format, "len", "pID", "Playlist" ; 
-			foreach my $id ( $sort_sub->( $pls_ref, $OPT{reverse})) { 
-				printf {*STDOUT}  $format, 
-				$pls{$id}{size},
-				$idlist->{$id}, 
-				$pls{$id}{title} ; 
-			}
-			return 0;
-		}
-
-		when "user.getrecenttracks" {
-			my $maxa = 0;
-			my $maxt = 0;
-			my $maxid = 2 +(length $OPT{'limit'});
-		
-			#my $xmlresponse = getXmlRecentTracks();
-			my $xml		= getXml_api20({
-					api_method	=> $commands{tracks}{api},
-					limit		=> $OPT{limit},
-					page		=> $OPT{page} || 1,
-					user		=> $OPT{user} || $lfm_user,
-					#to			=> $OPT{epoch_to} || 0,
-					#from		=> $OPT{epoch_frome} || 0,
-				});
-			my $tracks	= $xml->{recenttracks}{track} ;
-			my @tracks	= @{ $tracks };
-			my $sort_sub= \&sortTracksByDate;
-			my $idlist	= mapTrackIds($tracks);
-			my $format	= 
-				"% ".$maxid."s %02s:%02s % ".$maxa."s - %- ".$maxt."s\n";
-
-			if (		$OPT{order_by} eq 'title' ) {
-				$sort_sub = \&sortTracksByTitle 
-			} elsif (	$OPT{order_by} eq 'artist' ) {
-				$sort_sub = \&sortTracksByArtist 
-			}
-
-			my @sorted	= $sort_sub->($tracks, $OPT{reverse});
-		
-			#find longest name or title
-			foreach (@tracks){
-				my $name 	= $_->{name};
-				my $artist	= $_->{artist}->{content};
-				$maxa = max(length($artist), $maxa);
-				$maxt = max(length($name), $maxt); }
-				$maxa = min(WIDTH_ARTIST, $maxa);
-				$maxt = min(WIDTH_SONG, $maxt);
-				$maxt += 4-($maxid);
-		
-		
-				printf {*STDERR}  $format, 
-					"tID", "hh", "mm", 
-					"Artist", "Track";
-		
-			foreach (@sorted){
-		
-				my $trk		= $tracks[$_];
-				my $epoch	= $trk->{date}->{uts} || time;
-				my $name 	= $trk->{name};
-				my $artist	= $trk->{artist}->{content};
-		
-				#my ($sec, $min, $hour, $day,$month,$year) = 
-				#	(localtime($epoch))[0,1,2,3,4,5,6]; 
-				my ($min,$hour) = (localtime($epoch))[1,2] ;
-		
-				printf {*STDOUT} $format, 
-					$idlist->{$_}, $hour, $min, 
-					$artist, $name;
-			}
-			return 0;
-		}
-		when "listtags" {
-			sub printTags($$$$){
-				my $prefix		= 	$_[0];
-				my $command		= 	$_[1];
-				my %opt_toptags = %{$_[2]};
-				my %OPT			= %{$_[3]};
-				my $tagsfor		= $OPT{$prefix};
-
-				my @ordered = ();
-				my %tags	= ();
-				my $xml		= ();
-				my $max		= 0;
-				my $line	= 0;
-				my $onetoptag =	0;
-				my $appliedtags = 0;
-
-				$opt_toptags{api_method} = "$prefix.$command";
-				$xml		= getXml_api20(\%opt_toptags);
-
-				if ($command eq 'gettoptags'){
-					print "$prefix: $tagsfor\n    ";
-				}
-				if ($xml != -1) {
-					if      (defined $xml->{toptags}{tag}) {
-						%tags 	= %{ $xml->{toptags}{tag}};
-					} elsif (defined $xml->{tags}{tag}) {
-						%tags 	= %{ $xml->{tags}{tag}};
-						$appliedtags = 1;
-						#print Dumper ($xml);
-
+				$max = min($OPT{output_limit}, scalar (@ordered) );
+				$line = length("$tagsfor: ");
+				for (my $i=0; $i< $max; $i++){
+					$line += length("$ordered[$i], ");
+					if ( $line <= 80) {
+						print $ordered[$i];
+						print ", " unless ($i+1 == $max);
 					} else {
-						if ($command eq 'gettoptags'){
-							print "No tags";
-						}
+						print "\n";
+						#for (my $c=0; $c< length($tagsfor); $c++){
+						#	print " ";
+						#}
+						#print "  ";
+						print "    ";
+						print $ordered[$i];
+						print ", " unless ($i+1 == $max);
+						$line =4;
+						$line += length($ordered[$i]) + 2;
+						
 					}
-
-					my $onetoptag =	exists $tags{count} && 
-					 				exists $tags{name} && 
-					 				exists $tags{url};
-
-					if ($onetoptag){
-						$ordered[0] = $tags{name};
-					} elsif ($appliedtags) {
-						print "    Saved:\n    ";
-						@ordered 	= sort keys %tags;
-					} else {
-						@ordered	= sort { 
-							$tags{$b}{count}
-							<=>
-							$tags{$a}{count}
-						} keys %tags;
-					}
-					$max = min($OPT{output_limit}, scalar (@ordered) );
-					$line = length("$tagsfor: ");
-					for (my $i=0; $i< $max; $i++){
-						$line += length("$ordered[$i], ");
-						if ( $line <= 80) {
-							print $ordered[$i];
-							print ", " unless ($i+1 == $max);
-						} else {
-							print "\n";
-							#for (my $c=0; $c< length($tagsfor); $c++){
-							#	print " ";
-							#}
-							#print "  ";
-							print "    ";
-							print $ordered[$i];
-							print ", " unless ($i+1 == $max);
-							$line =4;
-							$line += length($ordered[$i]) + 2;
-							
-						}
-					}
-				} else {
-					print "No tags";
 				}
-				print "\n";
-				if ($command eq 'gettags' && scalar @ordered >= 1){
-				print "\n";
-				}
+			} else {
+				print "No tags";
 			}
-
-			if ($OPT{tag_artist} ne "") { 
-				if ($OPT{reverse}){
-					$OPT{api_method} = "artist.removetag";
-				} else {
-					$OPT{api_method} = "artist.addtags";
-				}
-				call_api20(\%OPT); 
+			print "\n";
+			if ($command eq 'gettags' && scalar @ordered >= 1){
+			print "\n";
 			}
-			if ($OPT{tag_album} ne "") { 
-
-				if ($OPT{reverse}){
-					$OPT{api_method} = "album.removetag";
-				} else {
-					$OPT{api_method} = "album.addtags";
-				}
-
-				call_api20(\%OPT); 
-			}
-			if ($OPT{tag_track} ne "") { 
-				if ($OPT{reverse}){
-					$OPT{api_method} = "track.removetag";
-				} else {
-					$OPT{api_method} = "track.addtags";
-				}
-				call_api20(\%OPT); 
-			}
-
-
-
-			if ( $OPT{artist} ne "" ){	printTags("artist","gettoptags",\%opt_toptags,\%OPT); }
-			if ( $OPT{artist} ne "" ){	printTags("artist","gettags",\%opt_toptags,\%OPT); }
-
-			if ( $OPT{album} ne "" ){ 	printTags("album", "gettoptags",\%opt_toptags,\%OPT); }
-			if ( $OPT{album} ne "" ){ 	printTags("album", "gettags",\%opt_toptags,\%OPT); }
-
-			if ( $OPT{track} ne "" ){ 	printTags("track", "gettoptags",\%opt_toptags,\%OPT); }
-			if ( $OPT{track} ne "" ){ 	printTags("track", "gettags",\%opt_toptags,\%OPT); }
-
-			if ($OPT{artist} eq "" && $OPT{album} eq "" && $OPT{track} eq ""){
-				printHelp();
-			}
-
-			return 0;
 		}
 
-		when "artist.addtags" { $servargs{tags}	= $OPT{tag_artist}; }
-		when  "album.addtags" { $servargs{tags}	= $OPT{tag_album}; }
-		when  "track.addtags" { $servargs{tags}	= $OPT{tag_track}; }
-		when "artist.removetag" { $servargs{tag}	= $OPT{tag_artist}; }
-		when  "album.removetag" { $servargs{tag}	= $OPT{tag_album}; }
-		when  "track.removetag" { $servargs{tag}	= $OPT{tag_track}; }
+		if ($OPT{tag_artist} ne "") { 
+			if ($OPT{reverse}){
+				$OPT{api_method} = "artist.removetag";
+			} else {
+				$OPT{api_method} = "artist.addtags";
+			}
+			call_api20(\%OPT); 
+		}
+		if ($OPT{tag_album} ne "") { 
 
-		default { printError(
-			(caller(0))[3].": Routine not defined for $OPT{api_method}");
-			exit 1;
-	}} 
+			if ($OPT{reverse}){
+				$OPT{api_method} = "album.removetag";
+			} else {
+				$OPT{api_method} = "album.addtags";
+			}
 
+			call_api20(\%OPT); 
+		}
+		if ($OPT{tag_track} ne "") { 
+			if ($OPT{reverse}){
+				$OPT{api_method} = "track.removetag";
+			} else {
+				$OPT{api_method} = "track.addtags";
+			}
+			call_api20(\%OPT); 
+		}
+
+
+
+		if ( $OPT{artist} ne "" ){	printTags("artist","gettoptags",\%opt_toptags,\%OPT); }
+		if ( $OPT{artist} ne "" ){	printTags("artist","gettags",\%opt_toptags,\%OPT); }
+
+		if ( $OPT{album} ne "" ){ 	printTags("album", "gettoptags",\%opt_toptags,\%OPT); }
+		if ( $OPT{album} ne "" ){ 	printTags("album", "gettags",\%opt_toptags,\%OPT); }
+
+		if ( $OPT{track} ne "" ){ 	printTags("track", "gettoptags",\%opt_toptags,\%OPT); }
+		if ( $OPT{track} ne "" ){ 	printTags("track", "gettags",\%opt_toptags,\%OPT); }
+
+		if ($OPT{artist} eq "" && $OPT{album} eq "" && $OPT{track} eq ""){
+			printHelp();
+		}
+
+		return 0;
+
+	} elsif ($call eq "artist.addtags") { $servargs{tags}	= $OPT{tag_artist};
+	} elsif ($call eq  "album.addtags") { $servargs{tags}	= $OPT{tag_album};
+	} elsif ($call eq  "track.addtags") { $servargs{tags}	= $OPT{tag_track};
+	} elsif ($call eq "artist.removetag") { $servargs{tag}	= $OPT{tag_artist};
+	} elsif ($call eq  "album.removetag") { $servargs{tag}	= $OPT{tag_album};
+	} elsif ($call eq  "track.removetag") { $servargs{tag}	= $OPT{tag_track}; 
+	} else {
+		printError('Not Implemented', (caller(0))[3].": Routine not defined for $OPT{api_method}", $badexit); 
+		exit 1;
+	}
+ 
 	my $response = getResponse(\%servargs, $terminal_encoding);
 
+	my $confirmation = "";
 	if ($response->is_success) {
-		my $confirmation = "";
-		given ($servargs{method}) {
-			when "track.love" { 
-				$confirmation = "loved song: $servargs{artist} - $servargs{track}";
-			}
-			when "track.unlove" { 
-				$confirmation = 
-				"unloved song: $servargs{artist} - $servargs{track}";
-			}
-			when "playlist.create" { 
-				$confirmation = 
-				"created playlist: $OPT{name}\n\t$OPT{description}";
-			}
-
-			when "playlist.addtrack" {
-				$confirmation = 
-				"added $OPT{artist} - $OPT{track} to $OPT{playlist}\n";
-			} 
-
-			when "artist.addtags" {
-				$confirmation = 
-				"tagged $OPT{artist} with $OPT{tag_artist}\n";
-			} 
-
-			when "album.addtags" {
-				$confirmation = 
-				"tagged $OPT{album} with $OPT{tag_album}\n";
-			} 
-			when "track.addtags" {
-				$confirmation = 
-				"tagged $OPT{track} with $OPT{tag_track}\n";
-			} 
-		}	
-		printf {*STDOUT} "$confirmation\n";
-		return 0;
-	}
+		$call = $servargs{method};
+			if    ($call eq "track.love") { $confirmation = "loved song: $servargs{artist} - $servargs{track}"; }
+			elsif ($call eq "track.unlove") { $confirmation = "unloved song: $servargs{artist} - $servargs{track}"; }
+			elsif ($call eq "playlist.create") { $confirmation = "created playlist: $OPT{name}\n\t$OPT{description}"; } 
+			elsif ($call eq "playlist.addtrack") { $confirmation = "added $OPT{artist} - $OPT{track} to $OPT{playlist}\n"; } 
+			elsif ($call eq "artist.addtags") { $confirmation = "tagged $OPT{artist} with $OPT{tag_artist}\n"; } 
+			elsif ($call eq "album.addtags") { $confirmation = "tagged $OPT{album} with $OPT{tag_album}\n"; } 
+			elsif ($call eq "track.addtags") { $confirmation = "tagged $OPT{track} with $OPT{tag_track}\n"; } 
+	}	
+	print "$confirmation\n";
+	return 0;
 }
 
 ##
@@ -839,17 +768,20 @@ sub call_api20($){
 ##
 
 sub getResponse($$){
+
 	my %servargs;
 	my $response;
 	my $incoding;
 	my $audioscrobbler	= URI->new($service);
 
-	printError((caller(0))[3].": please pass a hash reference")
-	if (ref $_[0] ne 'HASH');
+	if (ref $_[0] ne 'HASH') {
+		printError('No parameters', (caller(0))[3].": please pass a hash reference", $badexit)
+	}
 
 	%servargs = %{ $_[0] };
 	$incoding = $_[1];
 	my %unicode_param = ();
+
 
 	while ((my $k,my $v)=each %servargs){ 
 		if (lc $incoding eq 'utf8'){
@@ -920,7 +852,7 @@ sub requires_authentication($){
 	return $need_auth;
 }
 
-sub mapTrackIds($$){
+sub mapTrackIds($$) {
 
 	my $tracks = $_[0];
 	my $reverse= $_[1];
@@ -1028,23 +960,19 @@ sub utf8_value($$){
 	return $string;
 }
 
-sub printError {
-	my $error =  $_[0] || "";
-	my $help = "\nERROR:\n$error \n" unless (length $error <= 0);
-	print STDERR $help;
-	exit -1;
+sub printError($$$) {
+	(my $context, my $error, my $code) = @_;
+	$code = $code || 1;
+	printf STDERR "%s\n  %s\n", $context, $error ;
+	exit $code;
 }
 
-sub printWarning {
-	my $error =  $_[0] || "";
-	my $help = "\nWARNING:\n$error \n" unless (length $error <= 0);
-	print STDERR $help;
-}
+sub printWarning($) { printError('warning', $_[0], 0); }
 
 sub printHelp {
-	my $error =  $_[0] || "";
+	(my $context, my $error, my $code) = @_;
 
-	# TODO allow songs be named [0-9]*
+	# todo: allow songs be named [0-9]*
 	my $help =<< 'EOH'
 	.usage: $0: <command> [options]
 	. where command is one of 
@@ -1056,22 +984,31 @@ sub printHelp {
 	.   tag        (T)      add or list tags
 	.
 	. applicability of options:
-	.   add        -p { pID | name } -t { tID | TITLE } -a NAME
+	.   add        -p pID | --p.NAME { -t tID | --t t.TITLE -a NAME}
 	.   create     -d DESCRIPTION -n NAME
-	.   love       [ -r (unlove)   ] -t { tID | TITLE } -a NAME
-	.   playlists  [ -l n] [ -s { id | title | track  }]
-	.   tracks     [ -l n] [ -s { id | title | artist }]
+	.   love       [ -r (unlove)   ]    { -t tID | --t t.TITLE -a NAME}
+	.   playlists  [ -l n ][ -s id | title | Tracks]
+	.   tracks     [ -l n ][ -s id | title | artist]
 	.   tag        -a artist -A album -t tID --t track -ls
 	.
 	. general options
 	.   -r                  reverse sort order (or unlove)
 	.   -l <N>              limit output to N lines
-	.   -s                  sort output by id, title or artist
+	.   -s                  sort output by a given column
 EOH
 	;
+
+#  '-ol' => {            'tag'=>'i'                                                                        },
+#  '-ta' => {            'tag'=>'s'                                                                        }, 
+#  '-tA' => {            'tag'=>'s'                                                                        },
+#  '-tt' => {            'tag'=>'s'                                                                        },
+#  '-ls' => {            'tag'=>'n'                                                                        },
+#  ); my %args_long = (
+# '--t'  => {'add'=>'s',      'tag'=>'s',         'love'=>'s'                                              },
+# '--p'  => {'add'=>'s'                                                                                    }, 
+
 	$help =~ s/^\t+\.//gm;
 	$help =~ s/\$0/$0/;
-	$help .= "\nERROR:\n$error \n" unless (length $error <= 0);
-	print STDERR $help;
-	exit;
+	print STDERR "$help\n";
+	printError($context, $error, $code)
 }
