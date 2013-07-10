@@ -1,7 +1,12 @@
-lfm.pl (0.0.1)
+lfm.pl (0.0.2)
+* argument parsing is less convoluted
+* service connection preserved between several internal calls
+* most API calls return in less than two seconds
+* should be possible to maintain and add features now. Yay!
 
+lfm.pl (0.0.1)
 * list a user's playlists 
 * list recently scrobbles tracks (including `currently playing')
 * add a song to a playlist using output from the two previous features
-  as a measue of convinience or by supplying the artist, song and 
-  playlist manually. 
+for convenience convenience or by supplying the artist, song and 
+playlist names manually. 
