@@ -29,6 +29,7 @@ binmode STDOUT, ":encoding($terminal_encoding)";
 use strict;
 use warnings;
 use v5.10;
+use Encode;
 use Data::Dumper;
 use LWP::UserAgent;
 use LWP::Protocol::https;
@@ -168,7 +169,6 @@ sub parse_options() {
 			}
 			elsif (defined($argvalues{$optim}) and  $argvalues{$optim} eq 'None') {
 				$options{$a} = [$optim => 0xf055];
-
 			}
 			else {
 				# split {ItA} into "it|track|artist"
@@ -282,10 +282,6 @@ my	$ua = LWP::UserAgent->new(
 	#$ua->conn_cache( $cache_obj ) #  LWP::ConnCache
 	#$ua->conn_cache( LWP::ConnCache->new );
 
-	#conn_cache              undef
-	#keep_alive 
-	#verify_hostname
-	#say Dumper($ua);
 #call_api20(\%OPT);
 #exit -1;
 my $lfm = Last->new( \%OPT );
@@ -374,6 +370,9 @@ sub call {
 	}
 	return 1;
 };
+#
+# Submit a REST query
+#
 sub ask_in_unicode_and_get_response {
 	my $self = shift;
 	my $servargs = shift;
@@ -794,7 +793,7 @@ sub playlist_addtrack {
 #) { $confirmation = "added $OPT{artist} - $OPT{track} to $OPT{playlist}\n"; } 
 		# album => $self->{options}->{album},
 	);
-	#if ($call eq "playlist.addtrack") {
+	#if ($call eq "playlist.addtrack") 
 	# map --p or -p to a playlist id
 	#my $xml_p	= getXml_api20(\%opt_playlists);    # todo: cache this until a new list is added
 
@@ -855,21 +854,6 @@ package Whatever;
 sub min (@) { reduce { $a < $b ? $a : $b } @_ }
 sub max (@) { reduce { $a > $b ? $a : $b } @_ }
 
-#	} else {
-#	}
-#
-#	my $response = getResponse(\%servargs, 'utf8');
-#	#print Dumper($response->decoded_content);
-#	if ($response->is_success) {
-#		#print Dumper( XMLin(($response->decoded_content, @xmlargs)) );
-#		return XMLin(($response->decoded_content, @xmlargs));
-#	} else {
-#		say Dumper($response);
-#	}
-#	return -1;
-#}
-# -------------------------
-
 # oldcall
 sub call_api20{
 	my %opt_toptags = (
@@ -883,10 +867,6 @@ sub call_api20{
 	my $call = $servargs{method};
 
 
-
-
-		# } elsif ($call eq "artist.addtags") { $servargs{tags}	= $OPT{tag_artist};
-		# } elsif ($call eq  "album.addtags") { $servargs{tags}	= $OPT{tag_album};
 		# } elsif ($call eq  "track.addtags") { $servargs{tags}	= $OPT{tag_track};
 		# } elsif ($call eq "artist.removetag") { $servargs{tag}	= $OPT{tag_artist};
 		# } elsif ($call eq  "album.removetag") { $servargs{tag}	= $OPT{tag_album};
@@ -916,9 +896,7 @@ sub call_api20{
 #
 # Helpers 
 #
-
 sub mapTrackIds {
-
 	my $tracks = $_[0];
 	my $reverse= $_[1];
 
