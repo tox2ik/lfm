@@ -1,16 +1,27 @@
 #!/usr/bin/perl -w
-#BUGS 
-#
+# BUGS 
+# ----
 # lfm t -s title  -> sorts on artist
 # lfm p -s tracks -> does not sort on list length
 # 
-#
-#
+# ideas for future
+# ----------------
+# - save output ($response->decoded_content in Last::get_xml_api20) for local caching.
+# - write tests
+#    validity of parsed arguments
+#    argument mutual exclusions
+#    every command on good input
+#        same with -t / --t , -p / --p
+#        same with -s a/b/c and -r
+#    every command on bad input (from server)
+#    every command on void input or timeout (from server)
+#    every command without network
+# - export a HTTP server / interface (maybe for fun).
 package constants;
 use constant OUTPUT_LIMIT	=> 14; # lines
-use constant WIDTH_ARTIST	=> 43; # chars
-use constant WIDTH_SONG		=> 23; 
-use constant DEBUG			=> 1;
+use constant WIDTH_ARTIST	=> 48; # chars
+use constant WIDTH_SONG		=> 25; 
+#use constant DEBUG			=> 1;
 
 my $lfm_sk;   
 my $lfm_user;
@@ -37,9 +48,6 @@ use LWP::Protocol::https;
 use URI::QueryParam;
 #export PERL_LWP_SSL_VERIFY_HOSTNAME=0
 
-
-
-sub Whatever::call_api20;
 sub Help::printError;
 
 my $exit_good = 0;
@@ -272,26 +280,12 @@ $OPT{tag_track}		= $cliargs{'-tt'}|| "";
 #
 # Call the API
 #
-my	$ua = LWP::UserAgent->new(
-		keep_alive => undef, # max connections, undef = unlimited
-	);
-	#$ua->show_progress(1);
-	$ua->timeout($httpTimeout);
-	$ua->ssl_opts(verify_hostname => 0);
-	#$ua->agent('lfm.pl 0.0.2');
-	#$ua->conn_cache( $cache_obj ) #  LWP::ConnCache
-	#$ua->conn_cache( LWP::ConnCache->new );
 
-#call_api20(\%OPT);
-#exit -1;
 my $lfm = Last->new( \%OPT );
    $lfm->call();
-#print "A  A A A \n";
-#exit -1;
 
 
 # new api object
-
 package Last;
 use Encode qw(encode_utf8);
 use Digest::MD5 qw(md5_hex);
@@ -299,20 +293,26 @@ use List::Util qw(min max);
 use Data::Dumper;
 use XML::Simple;
 use Carp;
-our $_____hold_it;
+our $_____hold_it; # "graceful" abort for endless recursive calls. 
 our $AUTOLOAD;
 my %last_fields = (
 	options => {},
 	signed_methods => undef,
 	peers => undef,
+	ua => undef,
 );
-
 sub new {
 	my $class = shift;
 	my $opts = shift;
-	my $self = {_permitted => \%last_fields, %last_fields};
+	#my $self = {_permitted => \%last_fields, %last_fields};
+	my $self = {_permitted => \%last_fields};
 	$self->{options} = $opts;
 	$self->{signed_methods} = [
+	# these need the API secret
+	# not sure if I'm breaking TOS by distributing it.
+	# I think it is impossible for one user to manipulate another user's data
+	# because the user-generated session key is part of the signature.
+	# TODO figure this out.
 		'track.love', 
 		'track.unlove', 
 		'artist.addtags',
@@ -327,6 +327,16 @@ sub new {
 		'playlist.create',
 		'playlist.addtrack'
 	];
+	my	$ua = LWP::UserAgent->new(
+		keep_alive => undef, # max connections, undef = unlimited
+		#$ua->conn_cache( $cache_obj ) #  LWP::ConnCache
+		#$ua->conn_cache( LWP::ConnCache->new );
+	);
+		#$ua->show_progress(1);
+		$ua->timeout($httpTimeout);
+		$ua->ssl_opts(verify_hostname => 0); # does this save time?
+		$ua->agent('lfm.pl/0.0.2');
+	$self->{ua} = $ua;
 	bless ($self, $class);
 	return $self;
 };
@@ -336,14 +346,18 @@ sub AUTOLOAD {
 	my $type = ref($self) or croak "$self is not an object.";
 	my $name = $AUTOLOAD;
 	   $name =~ s/.*://;
-	unless (ref $self eq 'HASH') { confess sprintf 
-		"%s\n%s",
+	unless (ref $self eq 'Last') { 
+		say Dumper($self);
+		say "ref: " . ref $self;
+		confess sprintf "%s\n%s",
 		"Object called improperly. \$self = $self",
 		"Offender:\n\t$AUTOLOAD"; 
 }
 	#unless (ref $self->{_permitted} eq 'HASH') { say "BAD NAME 1 : _permitted"; }
 	#unless (ref $self->{_permitted}->{$name} eq 'HASH') { say "BAD NAME 2 : $name"; }
 	unless (exists $self->{_permitted}->{$name}) {
+		say "       Autoload: " . $AUTOLOAD;
+		say "_permitted.name: " . $name;
 		croak "Undefined field: ${type}->${name}"; }
 	if (@_) { return $self->{$name} = shift; }
 	else { 
@@ -352,23 +366,54 @@ sub AUTOLOAD {
 sub call {
 	my $self = shift;
 	my %doCall = (
-		'user.getplaylists'     => \&user_getplaylists,
-		'user.getrecenttracks'  => \&user_getrecenttracks,
-		'playlist.addtrack'     => \&playlist_addtrack,
-		'track.love'            => \&track_love,
-		'worktags'              => \&worktags,
+		'user.getplaylists' => \&user_getplaylists,
+		'user.getrecenttracks' => \&user_getrecenttracks,
+		'playlist.addtrack' => \&playlist_addtrack,
+		'playlist.create' => \&playlist_create,
+		'track.love' => \&track_love,
+		'worktags' => \&worktags,
 	);
 	my $method = $self->{options}->{api_method} || $self->{options}->{mix_method} ;
+	my $xml;
 
 	if (defined  $doCall{$method}) {
-		&{ $doCall{$method} }(  $self ); 
+		$xml = &{ $doCall{$method} }(  $self ); 
 	} else {
 		printError(
 			'Bug unknown command', 
 			"Routine for fetching xml ($method) is not defined ", 
 			$exit_bad);
 	}
-	return 1;
+
+	$Data::Dumper::Indent = 1;
+	$Data::Dumper::Terse = 1;
+	#say Dumper($response);
+	if ($self->{final_response}->is_success) {
+		my $call = $self->{options}->{api_method};
+		#say Dumper ($self->{options});
+		my $ok = "";
+
+		my $tA = $self->{options}->{tag_artist} || '';
+		my $ta = $self->{options}->{tag_album} || '';
+		my $tt = $self->{options}->{tag_track} || '';
+		my $A = $self->{options}->{artist} || '';
+		my $a = $self->{options}->{album} || '';
+		my $t = $self->{options}->{track} || '';
+		my $tid = $self->{options}->{tid} || 0;
+		my $pn = $self->{options}->{name};
+		my $pd = $self->{options}->{description};
+
+		if    ($call eq "track.love") { $ok = "loved song: $A - $t"; }
+		elsif ($call eq "track.unlove") { $ok = "unloved song: $A - $t"; }
+		elsif ($call eq "playlist.create") { $ok = "created playlist: $pn\n\t$pd"; }
+		elsif ($call eq "playlist.addtrack") { $ok = "added $A - $t to $pn\n"; }
+		elsif ($call eq "artist.addtags") { $ok = "tagged $A with $tA\n"; }
+		elsif ($call eq "album.addtags") { $ok = "tagged $a with $ta\n"; }
+		elsif ($call eq "track.addtags") { $ok = "tagged $t with $tt\n"; }
+		print STDERR "$ok\n";
+		return $exit_good;
+	}	
+	return $exit_bad;
 };
 #
 # Submit a REST query
@@ -401,6 +446,9 @@ sub ask_in_unicode_and_get_response {
 	if ($servargs->{'sk'}) {
 		foreach my $key (sort keys %unicode_param) {
 			my $val = $unicode_param{$key};
+			if (not defined $val) {
+				die "undefined: key $key";
+			}
 			$signature .= $key.$val;
 		}
 		$signature .= $secret; 
@@ -408,10 +456,10 @@ sub ask_in_unicode_and_get_response {
 		$audioscrobbler->query_param('api_sig', $signature);
 		$servargs->{api_sig} = $signature;
 
-		$response = $ua->post($audioscrobbler);
+		$response = $self->{ua}->post($audioscrobbler);
 		$audioscrobbler->query_param('sk', '');
 	} else {
-		$response = $ua->post($audioscrobbler); # use get?
+		$response = $self->{ua}->post($audioscrobbler); # use get?
 	}
 	#say "sub ask_in_unicode_and_get_response ? ";
 	unless ($response->is_success) {
@@ -420,7 +468,8 @@ sub ask_in_unicode_and_get_response {
 			#say Dumper($audioscrobbler);
 			#say Dumper(%servargs);
 			my $_uri = $response->request->{_uri};
-			   $_uri =~ s/([&\?][a-zA-Z_]+=)/\n $1/g;
+			   $_uri =~ s/([&\?][a-zA-Z_]+=)/\n $1\t/g;
+			   $_uri =~ s/(sk=)\t*[0-9a-zA-Z]{32}/$1 ***/g;
 			say "response != 200;\n" . $_uri;
 		}
 
@@ -459,9 +508,13 @@ sub get_xml_api20 {      die sprintf "Recursion Fail? (calls%d)" , $_____hold_it
 		while (((my $aidx, my $lsid) = each %$idlist_t) && ! $idx){
 			if ($opt->{tid} == $lsid) { $idx = $aidx; }
 		}
-		$servargs->{artist}	= $tracks->[$idx]->{artist}{content};
-		$servargs->{album}	= $tracks->[$idx]->{album}{content} || "";
-		$servargs->{track}	= $tracks->[$idx]->{name};
+		$servargs->{artist}	= $tracks->[$idx]->{artist}{content} || '';
+		$servargs->{album}	= $tracks->[$idx]->{album}{content} || '';
+		$servargs->{track}	= $tracks->[$idx]->{name} | '';
+		#  add -tn --p 'Listname' needs to have artist, album, track
+		$self->{options}->{artist}	= $tracks->[$idx]->{artist}{content} || '';
+		$self->{options}->{album}	= $tracks->[$idx]->{album}{content} || '';
+		$self->{options}->{track}	= $tracks->[$idx]->{name} | '';
 	} else {
 		$servargs->{artist}	= $opt->{artist};
 		$servargs->{album}	= $opt->{album};
@@ -474,9 +527,13 @@ sub get_xml_api20 {      die sprintf "Recursion Fail? (calls%d)" , $_____hold_it
 	my $response = $self->ask_in_unicode_and_get_response($servargs, $terminal_encoding);
 
 	if ($response->is_success) {
-		# save output $response->decoded_content;
 		my $xs = XML::Simple->new(%{$xmlargs});
 		my $moo = $xs->xml_in($response->decoded_content);
+		# possible issue 
+		# this would cause trouble in Last->call() if it were used simultaneously with itself
+		# should probably return the whole response and generalize data extraction in 
+		# all subs that use this
+		$self->{final_response} = $response; 
 		return $moo;
 	} else {
 		say Dumper($response);
@@ -520,7 +577,8 @@ sub user_getplaylists { # elsif ($method eq "user.getplaylists") {
 		if ($i % 23 == 0) { printf $format, "len", "pID", "Playlist" ; }
 		printf $format, $lists->{$id}{size}, $idlist->{$id}, $lists->{$id}{title}; 
 	}
-	return $exit_good;
+	print ref $xml;
+	return $xml;
 };
 
 sub user_getrecenttracks_xml {
@@ -576,7 +634,7 @@ sub user_getrecenttracks {
 		my ($min,$hour) = (localtime($epoch))[1,2] ;
 		printf $format, $idlist->{$_}, $hour, $min, $artist, $name;
 	}
-	return $exit_good;
+	return $xml;
 }
 #our $_____hold_it;
 sub track_love {
@@ -589,15 +647,15 @@ sub track_love {
                                     track => $self->{options}{track},
                                     artist => $self->{options}{artist} },
 									{}, 1); # xmlargs and anti-recurse
-	return $exit_good;
+	return $xml;
 }
 
 sub playlist_create {
 	my $self = shift;
 	my %servargs = (
 		method => 'playlist.create',
-		name => $self->{options}->{name},
-		descriptions => $self->{options}->{descriptions},
+		title => $self->{options}->{name},
+		description => $self->{options}->{description},
 	);
 	return $self->get_xml_api20(\%servargs, {});
 }
@@ -619,8 +677,7 @@ sub printTags {
 	my $appliedtags = 0;
 
 	$servargs->{method} = $method;
-	#$xml		= getXml_api20(\%opt_toptags);
-	$xml		= $self->get_xml_api20( $servargs );
+	$xml = $self->get_xml_api20( $servargs );
 
 	if ($method =~ m/gettoptags$/){
 		printf "%s (%s tags)\n", $aat_val, $aat_key; 
@@ -679,10 +736,6 @@ sub printTags {
 	} else {
 		print "No tags";
 	}
-	#print "\n";
-	if ($command eq 'gettags' && scalar @ordered >= 1){
-	#print "\n";
-	}
 }
 
 sub worktags { # add, remove, list
@@ -690,10 +743,10 @@ sub worktags { # add, remove, list
 	#my $method = $self->{options}->{api_method};
 
 	my %servargs = (
-		#method => $self->{options}->{api_method},
-		#tag_artist => $self->{options}->{tag_artist};
-		#tag_album => $self->{options}->{tag_album};
-		#tag_track => $self->{options}->{tag_track};
+		# method => $self->{options}->{api_method},
+		# tag_artist => $self->{options}->{tag_artist};
+		# tag_album => $self->{options}->{tag_album};
+		# tag_track => $self->{options}->{tag_track};
 		# artist => $self->{options}->{artist},
 		# album => $self->{options}->{album},
 		# track => $self->{options}->{track},
@@ -753,7 +806,9 @@ sub worktags { # add, remove, list
 				#return $self->get_xml_api20(\%servargs, {});
 			}
 		}
-		return 1;
+		# todo: make the calls
+		#return $xml;
+		return 000000000000000000;
 	} elsif ($add) {
 		# todo
 		$method = $servargs{method} || '';
@@ -785,14 +840,6 @@ sub worktags { # add, remove, list
 
 sub playlist_addtrack {
 	my $self = shift;
-	my %servargs = (
-		artist => $self->{options}->{artist},
-		track => $self->{options}->{track},
-		#method => "playlist.addtrack", $self->{options}->{track},
-		method => $self->{options}->{api_method},
-#) { $confirmation = "added $OPT{artist} - $OPT{track} to $OPT{playlist}\n"; } 
-		# album => $self->{options}->{album},
-	);
 	#if ($call eq "playlist.addtrack") 
 	# map --p or -p to a playlist id
 	#my $xml_p	= getXml_api20(\%opt_playlists);    # todo: cache this until a new list is added
@@ -801,6 +848,13 @@ sub playlist_addtrack {
 	my $lists	= $xml_p->{playlists}->{playlist};
 	my $idlist = Whatever::mapPlaylistIds($lists);
 	my $lfmpid = undef;
+
+	my %servargs = (
+		artist => $self->{options}->{artist},
+		track => $self->{options}->{track},
+		#method => "playlist.addtrack", $self->{options}->{track},
+		method => $self->{options}->{api_method},
+	);
 
 	if ($self->{options}->{pid} != 0) {
 		while ( ((my $lfmid, my $lsid) = each %$idlist) && ! $lfmpid){
@@ -828,7 +882,8 @@ sub playlist_addtrack {
 		if ((scalar keys %found) >= 2 ){
 			Help::printError(
 					'Ambiguous playlist name.',
-					sprintf("Add %s - %s\n  to which playlist?\n", $self->{options}->{artist}, $self->{options}->{track}),
+					sprintf("Add %s - %s\n  to which playlist?\n",
+						$self->{options}->{artist}, $self->{options}->{track}),
 					$exit_pass);
 			my $format = "% 4s %s\n";
 			printf STDERR $format, "id", "name";
@@ -841,7 +896,10 @@ sub playlist_addtrack {
 
 
 	Help::printError("Bug in addtrack:", "No such playlist", $exit_pebkac) if (! $lfmpid );
-	Help::printWarning("Bad artist name") if ($servargs{artist} =~ m/^$/ );
+	if ( $servargs{artist} =~ m/^$/ ) {
+		say Dumper(\%servargs);
+		Help::printWarning("Bad artist name") ;
+	}
 	Help::printWarning("Bad track name") if ($servargs{track} =~ m/^$/ );
 
 	$servargs{playlistID}	= $lfmpid;
@@ -854,92 +912,62 @@ package Whatever;
 sub min (@) { reduce { $a < $b ? $a : $b } @_ }
 sub max (@) { reduce { $a > $b ? $a : $b } @_ }
 
-# oldcall
-sub call_api20{
-	my %opt_toptags = (
-		artist		=> $OPT{artist},
-		album		=> $OPT{album},
-		track		=> $OPT{track},
-	);
-
-	my $method;
-	my %servargs;
-	my $call = $servargs{method};
-
-
-		# } elsif ($call eq  "track.addtags") { $servargs{tags}	= $OPT{tag_track};
-		# } elsif ($call eq "artist.removetag") { $servargs{tag}	= $OPT{tag_artist};
-		# } elsif ($call eq  "album.removetag") { $servargs{tag}	= $OPT{tag_album};
-		# } elsif ($call eq  "track.removetag") { $servargs{tag}	= $OPT{tag_track}; 
-		# } else {
-		# 	printError('Not Implemented', (caller(0))[3].": Routine not defined for $OPT{api_method}", $exit_bad); 
-		# 	exit 1;
-		# }
- 
-	my $response = getResponse(\%servargs, $terminal_encoding);
-
-	my $confirmation = "";
-	if ($response->is_success) {
-		$call = $servargs{method};
-		if    ($call eq "track.love") { $confirmation = "loved song: $servargs{artist} - $servargs{track}"; }
-		elsif ($call eq "track.unlove") { $confirmation = "unloved song: $servargs{artist} - $servargs{track}"; }
-		elsif ($call eq "playlist.create") { $confirmation = "created playlist: $OPT{name}\n\t$OPT{description}"; } 
-		elsif ($call eq "playlist.addtrack") { $confirmation = "added $OPT{artist} - $OPT{track} to $OPT{playlist}\n"; } 
-		elsif ($call eq "artist.addtags") { $confirmation = "tagged $OPT{artist} with $OPT{tag_artist}\n"; } 
-		elsif ($call eq "album.addtags") { $confirmation = "tagged $OPT{album} with $OPT{tag_album}\n"; } 
-		elsif ($call eq "track.addtags") { $confirmation = "tagged $OPT{track} with $OPT{tag_track}\n"; } 
-		print "$confirmation\n";
-		return 0;
-	}	
-}
+# # oldcall
+# sub call_api20{
+# 	my %opt_toptags = (
+# 		artist		=> $OPT{artist},
+# 		album		=> $OPT{album},
+# 		track		=> $OPT{track},
+# 	);
+# 
+# 	my $method;
+# 	my %servargs;
+# 	my $call = $servargs{method};
+# 
+# 
+# 		# } elsif ($call eq  "track.addtags") { $servargs{tags}	= $OPT{tag_track};
+# 		# } elsif ($call eq "artist.removetag") { $servargs{tag}	= $OPT{tag_artist};
+# 		# } elsif ($call eq  "album.removetag") { $servargs{tag}	= $OPT{tag_album};
+# 		# } elsif ($call eq  "track.removetag") { $servargs{tag}	= $OPT{tag_track}; 
+# 		# } else {
+# 		# 	printError('Not Implemented', (caller(0))[3].": Routine not defined for $OPT{api_method}", $exit_bad); 
+# 		# 	exit 1;
+# 		# }
+# 	my $response = getResponse(\%servargs, $terminal_encoding);
+# }
 
 #
 # Helpers 
 #
 sub mapTrackIds {
 	my $tracks = $_[0];
-	my $reverse= $_[1];
-
+	my $reverse = $_[1];
 	my @sorted = Whatever::sortTracksByDate($tracks);
 	my %idlist = ();
 	my $len = @sorted;
 	my $backwards = 0;
-
-	# make shortcuts
-	foreach (@sorted){
-		if ($reverse){
-			$idlist{$_} = ++$backwards;
-		} else {
-			$idlist{$_} = $len--;
-		}
-	}
+	foreach (@sorted){ 
+		if ($reverse){ $idlist{$_} = ++$backwards;
+		} else { $idlist{$_} = $len--; }}
 	return \%idlist;
-
 }
 sub mapPlaylistIds {
 	my $xmlref = $_[0];
 	my $reverse = 1;
 	my $len	= keys %{ $xmlref };
 	my %idlist = ();
-
 	foreach my $id ( Whatever::sortPlaylistById($xmlref, $reverse)) { 
-		$idlist{$id} = $len--;
-	}
+		$idlist{$id} = $len--; }
 	return \%idlist
 }
-
-sub sortPlaylistByTitle($$){
-	my %xml		= %{ $_[0] };
+sub sortPlaylistByTitle($$) {
+	my %xml = %{ $_[0] };
 	my $reverse	= $_[1];
-	my @ret = sort { 
-		lc($xml{$a}{title}) 
-		cmp 
-		lc($xml{$b}{title}) 
-	} keys %xml;
+	my @ret = sort { lc($xml{$a}{title}) cmp lc($xml{$b}{title}) } keys %xml;
 	return reverse @ret if ($reverse);
 	return @ret;
 }
-sub sortPlaylistByTrack($$){
+sub sortPlaylistByTrack($$) {
 	my %xml		= %{ $_[0] };
 	my $reverse	= $_[1];
 	my @ret = sort { 
@@ -951,15 +979,14 @@ sub sortPlaylistByTrack($$){
 	return @ret;
 }
 sub sortPlaylistById($$){
-	my %xml		= %{$_[0]};
+	my %xml = %{$_[0]};
 	my $reverse	= $_[1];
 	my @ret = sort keys %xml;
 	return reverse @ret if ($reverse);
 	return @ret;
 }
 sub sortTracksByDate {
-		#my $self = shift;
-	my @in		= @{$_[0]};
+	my @in = @{$_[0]};
 	my $reverse = $_[1];
 	my $now = time;
 	my @ret = sort { 
@@ -972,7 +999,7 @@ sub sortTracksByDate {
 }
 
 sub sortTracksByArtist($$) {
-	my @in 		= @{$_[0]};
+	my @in = @{$_[0]};
 	my $reverse	= $_[1];
 	my @ret = sort { 
 		my $left  = lc($in[$a]->{artist}{content}.$in[$a]->{name});
@@ -995,11 +1022,13 @@ sub sortTracksByTitle($$) {
 	return @ret;
 }
 
-sub utf8_value($$){
-	if (! defined $_[0] ){ return undef; }
-	my $incoding 	= $_[1];
-	my $out 		= $_[0];
-	my $octets = encode($incoding, $out);
+# um...
+sub utf8_value($$) {
+	#if (! defined $_[0] ){ return undef; }
+	return undef unless defined $_[0];
+	my $out = $_[0];
+	my $encoding = $_[1];
+	my $octets = encode($encoding, $out);
 	my $string = decode('utf-8', $octets);
 	return $string;
 }
