@@ -1,7 +1,9 @@
 #!/usr/bin/perl -w
 #BUGS 
 #
-# lfm t -s title -> sorts on artist
+# lfm t -s title  -> sorts on artist
+# lfm p -s tracks -> does not sort on list length
+# 
 #
 #
 package constants;
@@ -36,12 +38,13 @@ use URI::QueryParam;
 
 
 
-sub Whatever::call_api20($);
-sub Help::printError($$$);
+sub Whatever::call_api20;
+sub Help::printError;
 
 my $exit_good = 0;
 my $exit_bad = 1;
 my $exit_pebkac = 2;
+my $exit_pass = 0x32202;
 
 if (-e ! $lfmrc) { 
 	Help::usage("run get-session_key.sh and set \$lfmrc in lfm.pl"); 
@@ -355,17 +358,21 @@ sub call {
 	my %doCall = (
 		'user.getplaylists'     => \&user_getplaylists,
 		'user.getrecenttracks'  => \&user_getrecenttracks,
+		'playlist.addtrack'     => \&playlist_addtrack,
 		'track.love'            => \&track_love,
 		'worktags'              => \&worktags,
 	);
 	my $method = $self->{options}->{api_method} || $self->{options}->{mix_method} ;
 
-	printf "calling: %s\n", $method;
-	&{ $doCall{$method} }(  $self ); 
-	print "called.\n";
+	if (defined  $doCall{$method}) {
+		&{ $doCall{$method} }(  $self ); 
+	} else {
+		printError(
+			'Bug unknown command', 
+			"Routine for fetching xml ($method) is not defined ", 
+			$exit_bad);
+	}
 	return 1;
-	## map -t n to an artist, album and a track
-
 };
 sub ask_in_unicode_and_get_response {
 	my $self = shift;
@@ -413,7 +420,8 @@ sub ask_in_unicode_and_get_response {
 			#say Dumper($response); 
 			#say Dumper($audioscrobbler);
 			#say Dumper(%servargs);
-			my $_uri = $response->request->{_uri} =~ s/([&\?][a-zA-Z_]+=)/\n $1/g;
+			my $_uri = $response->request->{_uri};
+			   $_uri =~ s/([&\?][a-zA-Z_]+=)/\n $1/g;
 			say "response != 200;\n" . $_uri;
 		}
 
@@ -480,8 +488,7 @@ sub get_xml_api20 {      die sprintf "Recursion Fail? (calls%d)" , $_____hold_it
 sub user_getplaylists_xml {
 	my $self = shift;
 	my %servargs = (
-		method => $commands{playlists}{api},
-		method => $OPT{page} || 1,
+		method => 'user.getplaylists',
 		page => $OPT{page} || 1,
 		user => $OPT{user} || $lfm_user,
 		#limit => $OPT{limit},
@@ -494,18 +501,25 @@ sub user_getplaylists_xml {
 	
 sub user_getplaylists { # elsif ($method eq "user.getplaylists") {
 	my $self = shift;
-	my $xml 	= $self->user_getplaylists_xml();
-	my $pls_ref	= $xml->{playlists}->{playlist};
-	my %pls		= %{ $pls_ref };
-	my $idlist  = Whatever::mapPlaylistIds( $pls_ref);
-	my $format	= "% 6s % 3s  %s\n";
-	my $sort_sub;
-	if 		($OPT{order_by} eq "id"    ){ $sort_sub = \&{ Whatever::sortPlaylistById } }  # todo case insensitive -s ID/id
-	elsif	($OPT{order_by} eq "track" ){ $sort_sub = \&{ Whatever::sortPlaylistByTrack } }
-	else {                                $sort_sub = \&{ Whatever::sortPlaylistByTitle } }
-		printf $format, "len", "pID", "Playlist" ; 
-	foreach my $id ( $sort_sub->( $pls_ref, $OPT{reverse})) { 
-		printf $format, $pls{$id}{size}, $idlist->{$id}, $pls{$id}{title}; 
+	my $xml = $self->user_getplaylists_xml();
+	my $lists = $xml->{playlists}->{playlist};
+	my $idlist = Whatever::mapPlaylistIds( $lists);
+	my $format = "% 6s % 3s  %s\n";
+	my $sort_sub = \&{ Whatever::sortPlaylistByTitle };
+	my $order = $self->{options}->{order_by};
+	if 	($order =~ m/^id$/i){ 
+		$sort_sub = \&{ Whatever::sortPlaylistById } }
+	elsif ($order =~ m/^(tracks?|size|length|len|songs?)$/){
+		$sort_sub = \&{ Whatever::sortPlaylistByTrack } 
+	}
+	my $limit = scalar keys $idlist;
+	   $limit = $self->{options}->{limit} unless not defined $limit ;
+	   $limit = min(scalar keys $idlist, $limit);
+	my @sorted = $sort_sub->($lists, $self->{options}->{reverse});
+	foreach (my $i=0; $i<$limit; $i++ ) { 
+		my $id = $sorted[$i];
+		if ($i % 23 == 0) { printf $format, "len", "pID", "Playlist" ; }
+		printf $format, $lists->{$id}{size}, $idlist->{$id}, $lists->{$id}{title}; 
 	}
 	return $exit_good;
 };
@@ -685,7 +699,7 @@ sub worktags { # add, remove, list
 		# album => $self->{options}->{album},
 		# track => $self->{options}->{track},
 		autocorrect => 1,
-);
+	);
 
 	my $method;
 	my $remove = $servargs{reverse} || '';
@@ -699,6 +713,7 @@ sub worktags { # add, remove, list
 	my $tid = $self->{options}->{tid} || 0;
 
 
+	# todo 
 	if ($remove and $art) {
 		$servargs{method} = "artist.removetag"; 
 		$servargs{artist} = $self->{options}->{artist};
@@ -741,6 +756,7 @@ sub worktags { # add, remove, list
 		}
 		return 1;
 	} elsif ($add) {
+		# todo
 		$method = $servargs{method} || '';
 		     if ($method eq "artist.addtags") { 
 		} elsif ($method eq  "album.addtags") { 
@@ -766,15 +782,72 @@ sub worktags { # add, remove, list
 
 	# input validation
 	if ($A.$a.$t eq '' and not $tid) { Help::usage('Not enough arguments.', "I need -artist (and -Album and/or --track)"); }
-
-	#say "worktags";
-	#say Dumper(\%servargs);
 }
 
-	
-	#call_api20(\%OPT); 
+sub playlist_addtrack {
+	my $self = shift;
+	my %servargs = (
+		artist => $self->{options}->{artist},
+		track => $self->{options}->{track},
+		#method => "playlist.addtrack", $self->{options}->{track},
+		method => $self->{options}->{api_method},
+#) { $confirmation = "added $OPT{artist} - $OPT{track} to $OPT{playlist}\n"; } 
+		# album => $self->{options}->{album},
+	);
+	#if ($call eq "playlist.addtrack") {
+	# map --p or -p to a playlist id
+	#my $xml_p	= getXml_api20(\%opt_playlists);    # todo: cache this until a new list is added
+
+	my $xml_p = $lfm->user_getplaylists_xml();
+	my $lists	= $xml_p->{playlists}->{playlist};
+	my $idlist = Whatever::mapPlaylistIds($lists);
+	my $lfmpid = undef;
+
+	if ($self->{options}->{pid} != 0) {
+		while ( ((my $lfmid, my $lsid) = each %$idlist) && ! $lfmpid){
+			if ($self->{options}->{pid} == $lsid) {
+				$lfmpid = $lfmid;
+				$servargs{playlist} = $lists->{$lfmid}->{title};
+			}
+		}
+	} elsif ($self->{options}->{playlist}) {
+		my $andexpr = "";
+		my %found =();
+		foreach (split /\s+/, $self->{options}->{playlist} ){
+			$_ = quotemeta $_;
+			$andexpr = sprintf '%s/%s/ && ', $andexpr, $_;
+		}
+		$andexpr =~ s/&&\s*$//;
+		foreach my $pls_id (keys %$lists){
+			my $pls_name = $lists->{$pls_id}->{title};
+			if (grep {eval $andexpr} $pls_name){
+				$found{$idlist->{$pls_id}} = $pls_name;
+				$lfmpid = $pls_id;
+				$self->{options}->{playlist} = $pls_name;
+			}
+		}
+		if ((scalar keys %found) >= 2 ){
+			Help::printError(
+					'Ambiguous playlist name.',
+					sprintf("Add %s - %s\n  to which playlist?\n", $self->{options}->{artist}, $self->{options}->{track}),
+					$exit_pass);
+			my $format = "% 4s %s\n";
+			printf STDERR $format, "id", "name";
+			foreach (sort {$found{$a} cmp $found{$b} } keys %found){ 
+				printf STDERR $format, $_, $found{$_}; 
+			}
+			return -1;
+		 }
+	} 
 
 
+	Help::printError("Bug in addtrack:", "No such playlist", $exit_pebkac) if (! $lfmpid );
+	Help::printWarning("Bad artist name") if ($servargs{artist} =~ m/^$/ );
+	Help::printWarning("Bad track name") if ($servargs{track} =~ m/^$/ );
+
+	$servargs{playlistID}	= $lfmpid;
+	return $self->get_xml_api20(\%servargs, {});
+}
 
 1;
 
@@ -782,48 +855,7 @@ package Whatever;
 sub min (@) { reduce { $a < $b ? $a : $b } @_ }
 sub max (@) { reduce { $a > $b ? $a : $b } @_ }
 
-# Submit a REST query
-#
-#	elsif ($method eq "artist.gettoptags") {
-#		$servargs{artist} = $OPT{'artist'};
-#		$servargs{autocorrect} = 1;
-#		#$mbid	= $OPT{mbid}
-#	}
-#
-#	elsif ($method eq "album.gettoptags") {
-#		$servargs{artist} = $OPT{'artist'};
-#		$servargs{album} = $OPT{'album'};
-#		$servargs{autocorrect} = 1;
-#		#$mbid = $OPT{mbid}
-#
-#	}
-#	elsif ($method eq "track.gettoptags") {
-#		$servargs{artist} = $OPT{'artist'};
-#		$servargs{track} = $OPT{'track'};
-#		$servargs{autocorrect} = 1;
-#		#$mbid = $OPT{mbid}
-#	}
-#
-#	elsif ($method eq "artist.gettags") {
-#		$servargs{artist} = $OPT{'artist'};
-#		$servargs{autocorrect} = 1;
-#		#$mbid = $OPT{mbid}
-#	}
-#
-#	elsif ($method eq "album.gettags") {
-#		$servargs{artist} = $OPT{'artist'};
-#		$servargs{album} = $OPT{'album'};
-#		$servargs{autocorrect} = 1;
-#		#$mbid = $OPT{mbid}
-#
-#	}
-#	elsif ($method eq "track.gettags") {
-#		$servargs{artist} = $OPT{'artist'};
-#		$servargs{track} = $OPT{'track'};
-#		$servargs{autocorrect} = 1;
-#		#$mbid = $OPT{mbid}
 #	} else {
-#		printError('Missing Arguments', "Routine for fetching xml ($method) is not defined ", $exit_pebkac);
 #	}
 #
 #	my $response = getResponse(\%servargs, 'utf8');
@@ -839,7 +871,7 @@ sub max (@) { reduce { $a > $b ? $a : $b } @_ }
 # -------------------------
 
 # oldcall
-sub call_api20($){
+sub call_api20{
 	my %opt_toptags = (
 		artist		=> $OPT{artist},
 		album		=> $OPT{album},
@@ -851,56 +883,6 @@ sub call_api20($){
 	my $call = $servargs{method};
 
 
-	if ($call eq "playlist.addtrack") {
-		# map --p or -p to a playlist id
-		#my $xml_p	= getXml_api20(\%opt_playlists);    # todo: cache this until a new list is added
-		my $xml_p = $lfm->user_getplaylists();
-		my $pls_ref	= $xml_p->{playlists}->{playlist};
-		my $idlist_p= mapPlaylistIds($pls_ref);
-		my $lfm_plid= 0;
-
-		if ($OPT{pid} !=0) {
-			while ( ((my $lfmid, my $lsid) = each %$idlist_p) && ! $lfm_plid){
-				if ($OPT{pid} == $lsid) {
-					$lfm_plid = $lfmid;
-					$OPT{playlist} = $pls_ref->{$lfmid}->{title};
-				}
-			}
-		} elsif ($OPT{playlist} ne "") {
-			my $andexpr = "";
-			my %found =();
-			foreach (split /\s+/, $OPT{playlist} ){
-				$andexpr = $andexpr . "/$_/ && "; 
-			} 	$andexpr =~ s/&&\s?\z//;
-				$andexpr =~ s,^$,/.*/,;
-
-			foreach my $pls_id (keys %$pls_ref){
-				my $pls_name = $pls_ref->{$pls_id}->{title};
-				if (grep {eval $andexpr} $pls_name){
-					$found{$idlist_p->{$pls_id}} = $pls_name;
-					$lfm_plid = $pls_id;
-					$OPT{playlist} = $pls_name;
-				}
-			}
-			if ((scalar keys %found) >= 2 ){
-				print STDERR "add $OPT{artist} - $OPT{track}\nto which playlist?\n";
-				my $format = "% 4s %s\n";
-					printf STDERR $format, "id", "name";
-				foreach (sort {$found{$a} cmp $found{$b} } keys %found){ 
-					printf $format, $_, $found{$_}; }
-				return 1;
-			 }
-		} 
-
-		printError("Last.fm:", "No such playlist", $exit_pebkac) if (! $lfm_plid );
-		printWarning("Bad artist name") if ($servargs{artist} =~ m/^$/ );
-		printWarning("Bad track name") if ($servargs{track} =~ m/^$/ );
-
-		$servargs{playlistID}	= $lfm_plid;
-
-
-
-		}
 
 
 		# } elsif ($call eq "artist.addtags") { $servargs{tags}	= $OPT{tag_artist};
@@ -940,7 +922,7 @@ sub mapTrackIds {
 	my $tracks = $_[0];
 	my $reverse= $_[1];
 
-	my @sorted = sortTracksByDate($tracks);
+	my @sorted = Whatever::sortTracksByDate($tracks);
 	my %idlist = ();
 	my $len = @sorted;
 	my $backwards = 0;
@@ -957,14 +939,12 @@ sub mapTrackIds {
 
 }
 sub mapPlaylistIds {
-	use Data::Dumper;
-
-	my $xmlref	= $_[0];
+	my $xmlref = $_[0];
 	my $reverse = 1;
-	my $len		= keys %{ $xmlref };
-	my %idlist	= ();
+	my $len	= keys %{ $xmlref };
+	my %idlist = ();
 
-	foreach my $id ( sortPlaylistById( $xmlref, $reverse)) { 
+	foreach my $id ( Whatever::sortPlaylistById($xmlref, $reverse)) { 
 		$idlist{$id} = $len--;
 	}
 	return \%idlist
@@ -999,7 +979,8 @@ sub sortPlaylistById($$){
 	return reverse @ret if ($reverse);
 	return @ret;
 }
-sub sortTracksByDate($$) {
+sub sortTracksByDate {
+		#my $self = shift;
 	my @in		= @{$_[0]};
 	my $reverse = $_[1];
 	my $now = time;
@@ -1048,16 +1029,16 @@ sub utf8_value($$){
 
 package Help;
 use Carp;
-sub printError($$$) {
+sub printError {
 	(my $context, my $error, my $code) = @_;
 	$context = $context || undef;
 	$error = $error || undef;
 	$code = $code || 1;
 	if (not defined $context or not defined $error) {
-		confess "printError needs 2 args.";
+		confess "printError needs at least 2 args. 3 at most.";
 	}
-	printf "%s\n  %s\n", $context, $error ;
-	exit $code;
+	printf STDERR "%s\n  %s\n", $context, $error ;
+	exit $code unless $code == $exit_pass;
 }
 sub printWarning($) { 
 	printError('Last.fm:', $_[0], 0);
