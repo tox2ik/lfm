@@ -1,28 +1,47 @@
-lfm - CLI to Last.fm (playlists, tagging, charts)
-=================================================
+lfm.pl - CLI to Last.fm (playlists, tagging, charts)
+====================================================
 
-Copyright (C) 2011-2011 Jaroslav Rakhmatoullin
+Copyright (C) 2011-2013 Jaroslav Rakhmatoullin
 License: BSD Simplified (See LICENSE for details)
-Version: 0.0.1
-URL: https://github.com/tox2ik/lfm
+Version: 0.0.2
+http://github.com/tox2ik/lfm
 
 Installation
-============
-
+------------
 Install Perl. Fetch the lfm.pl script from the above url. Chances are you 
 already have it. Invoke the script either directly or with the interpreter
 to see a description of the options. You will be told that you need a
-session key. run get-session_key.sh to get that.
+session key. Run get-session_key.sh to get that.
 
 Features
-========
-
+--------
 This section describes briefly the features that are added or removed to or 
-from the lfm.pl script.
+from the lfm.pl script. Actually, the script checks options and displays 
+what it can do when run without options;
 
+usage: lfm <command> [options]
+ where command is one of 
+   a dd  .  .  .  .  append song to playlist
+   c reate  .  .  .  new playlist
+   l ove    .  .  .  ❥  a track 
+   p laylists  .  .  show playlists
+   t racks  .  .  .  show recent scrobbles
+   T ag  .  .  .  .  add or list tags
+
+ applicability of options:
+   create  .  -d DESCRIPTION -n NAME
+   add  .  .  { -t tID | --t TITLE -a NAME} { --p NAME | -p pID }
+   love .  .  { -t tID | --t TITLE -a NAME} [ -r (unlove)  ]    
+   playlists  -s {id title tracks}
+   tracks  .  -s {id title artist}
+   tag  .  .  -a artist -A album -t tID --t track -ls
+ general options
+   -r               reverse sort order (or unlove)
+   -l num           limit output to num lines
+   -s column        order output on column
 
 
 Acknowledgements
-================
+----------------
 Inspired by lfmCMD.pl which is a generic last.fm webservices client for 
 Windows, Linux, OS X. See http://www.easyclasspage.de/lastfm/
