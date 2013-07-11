@@ -1,22 +1,39 @@
-THE FUTURE 
-==========
-Stuff to fix or implement. 
+lfm.pl TODO
+===========
+This file contains ideas for future and bugs.
 
 FEATURES
 --------
-* option -c for cache - dont fetch info for -t and -p from the net. 
+* save output ($response->decoded_content in Last::get_xml_api20) locally.
+* fetch the whole library (without getting banned).
+* charts
+* option -c for cache: do not fetch info for -t and -p from the net. 
 * tracks - add support for -to, -from and -page
 * get-sk - automate the process in this script
+* export a HTTP server / interface (maybe for fun).
+* write tests
+    validity of parsed arguments
+    argument mutual exclusions
+    every command on good input
+       same with -t / --t , -p / --p
+       same with -s a/b/c and -r
+    every command on bad input (from server)
+    every command on void input or timeout (from server)
+    every command without network
 
-
-QUALITY
+USABILITY
 -------
-* generalize mutually exclusive arguments and validation
-
+* die fast on mutually exclusive arguments
 
 BUGS
 ----
-* add -l support for -t to work 
-* tracks -l 1 doesnt work
-* tracks upper limit 200
-* add --p ' this / that ' fails because of the / 
+* lfm t -s title sorts on artist
+* lfm p -s tracks does not sort on list length
+* add -l support for -t to work (wot?)
+* tracks -l 1 shows two entries
+* [fixed] add --p ' this / that ' fails because of the / 
+
+API LIMITATIONS
+---------------
+* Tracks upper limit 200 (page + timestamp from-to circumvents this?).
+* [fixed] remove only one tag at a time 

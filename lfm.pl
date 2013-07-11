@@ -1,22 +1,8 @@
 #!/usr/bin/perl -w
-# BUGS 
-# ----
-# lfm t -s title  -> sorts on artist
-# lfm p -s tracks -> does not sort on list length
-# 
-# ideas for future
-# ----------------
-# - save output ($response->decoded_content in Last::get_xml_api20) for local caching.
-# - write tests
-#    validity of parsed arguments
-#    argument mutual exclusions
-#    every command on good input
-#        same with -t / --t , -p / --p
-#        same with -s a/b/c and -r
-#    every command on bad input (from server)
-#    every command on void input or timeout (from server)
-#    every command without network
-# - export a HTTP server / interface (maybe for fun).
+# lfm.pl
+# BSD License. See the LICENCE file for details.
+# Copyright (c) 2011, 2013 Jaroslav Rakhmatoullin
+# All rights reserved. 
 package constants;
 use constant OUTPUT_LIMIT	=> 14; # lines
 use constant WIDTH_ARTIST	=> 48; # chars
