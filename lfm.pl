@@ -23,6 +23,7 @@ my $terminal_encoding = $ENV{'LANGUAGE'} || $ENV{'LANG'} || 'en_US.iso8859-1';
 # FEEL FREE TO EDIT BELOW THIS LINE
 #
 binmode STDOUT, ":encoding($terminal_encoding)";
+binmode STDERR, ":encoding($terminal_encoding)";
 use strict;
 use warnings;
 use v5.10;
@@ -392,7 +393,7 @@ sub call {
 		if    ($call eq "track.love") { $ok = "loved song: $A - $t"; }
 		elsif ($call eq "track.unlove") { $ok = "unloved song: $A - $t"; }
 		elsif ($call eq "playlist.create") { $ok = "created playlist: $pn\n\t$pd"; }
-		elsif ($call eq "playlist.addtrack") { $ok = "added $A - $t to $pn\n"; }
+		elsif ($call eq "playlist.addtrack") { $ok = "added $A - $t to $pn"; }
 		elsif ($call eq "artist.addtags") { $ok = "tagged $A with $tA\n"; }
 		elsif ($call eq "album.addtags") { $ok = "tagged $a with $ta\n"; }
 		elsif ($call eq "track.addtags") { $ok = "tagged $t with $tt\n"; }
@@ -407,7 +408,7 @@ sub call {
 sub ask_in_unicode_and_get_response {
 	my $self = shift;
 	my $servargs = shift;
-	my $expected_encoding = shift; # i.e. the server wants unicode
+	my $terminal_locale_encoding = shift;
 	my $response;
 	my %unicode_param = ();
 	#say "sub ask_in_unicode_and_get_response";
@@ -419,12 +420,22 @@ sub ask_in_unicode_and_get_response {
 			$exit_bad);
 	}
 	while ((my $k,my $v)=each %$servargs){ 
-		if ($expected_encoding =~ m/utf\-?8/i){ 
-			#skip;
-		} else {
-			$k = encode_utf8($k);
-			$v = encode_utf8($v);
-		}
+		#if ($terminal_locale_encoding =~ m/utf\-?8/i){ 
+		#	#skip;
+		#	say $v;
+		#} else {
+		#	$k = encode_utf8($k);
+		#	$v = encode_utf8($v);
+		#}
+
+		# $v here can be both from the server - utf8
+		# and from the terminal. so this is bound to fail on
+		# non unicode terminals.
+		#$v = encode('utf8', decode($terminal_encoding, $v));
+		$k = $k; #; encode_utf8($k);
+		$v = encode_utf8($v);
+		
+
 		$unicode_param{$k} = $v;
 		$audioscrobbler->query_param($k, $v);
 	} 
@@ -847,6 +858,9 @@ sub playlist_addtrack {
 			if ($self->{options}->{pid} == $lsid) {
 				$lfmpid = $lfmid;
 				$servargs{playlist} = $lists->{$lfmid}->{title};
+				# todo return this, don't save as a property
+				$self->{options}->{name} = $lists->{$lfmid}->{title};
+				$self->{options}->{description} = $lists->{$lfmid}->{description};
 			}
 		}
 	} elsif ($self->{options}->{playlist}) {
