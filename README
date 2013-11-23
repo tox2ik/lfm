@@ -1,10 +1,8 @@
 lfm.pl - CLI to Last.fm (playlists, tagging, charts)
 ====================================================
 
-Copyright (C) 2011-2013 Jaroslav Rakhmatoullin
-License: BSD Simplified (See LICENSE for details)
-Version: 0.0.2
-http://github.com/tox2ik/lfm
+The intention is to provide quick access to various functions of the 
+Last.fm API in a terminal.
 
 Installation
 ------------
@@ -13,11 +11,16 @@ already have it. Invoke the script either directly or with the interpreter
 to see a description of the options. You will be told that you need a
 session key. Run get-session_key.sh to get that.
 
+Dependencies
+------------
+LWP::Protocol::http
+  IO::Socket::SSL
+XML::Simple
+
 Features
 --------
-This section describes briefly the features that are added or removed to or 
-from the lfm.pl script. Actually, the script checks options and displays 
-what it can do when run without options;
+This section describes briefly the features that are present in the script.
+Actually, no. Just run the thing;
 
 usage: lfm <command> [options]
  where command is one of 
@@ -45,3 +48,11 @@ Acknowledgements
 ----------------
 Inspired by lfmCMD.pl which is a generic last.fm webservices client for 
 Windows, Linux, OS X. See http://www.easyclasspage.de/lastfm/
+
+Legal
+-----
+
+Copyright (C) 2011-2013 Jaroslav Rakhmatoullin
+License: BSD Simplified (See LICENSE for details)
+Version: 0.0.2
+http://github.com/tox2ik/lfm
