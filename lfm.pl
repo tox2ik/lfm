@@ -264,15 +264,17 @@ $OPT{output_limit}	= $cliargs{'-ol'}|| 20; # max 100 tags
 $OPT{tag_artist}	= $cliargs{'-ta'}|| "";
 $OPT{tag_album}		= $cliargs{'-tA'}|| "";
 $OPT{tag_track}		= $cliargs{'-tt'}|| "";
+
 #
 # Call the API
 #
-
 my $lfm = Last->new( \%OPT );
    $lfm->call();
 
 
-# new api object
+#
+# API Class
+#
 package Last;
 use Encode qw(encode_utf8);
 use Digest::MD5 qw(md5_hex);
@@ -321,7 +323,8 @@ sub new {
 	);
 		#$ua->show_progress(1);
 		$ua->timeout($httpTimeout);
-		$ua->ssl_opts(verify_hostname => 0); # does this save time?
+		#$ua->ssl_opts(SSL_verify_mode => 'SSL_VERIFY_NONE');
+		$ua->ssl_opts(SSL_verify_mode => 'SSL_VERIFY_PEER');
 		$ua->agent('lfm.pl/0.0.2');
 	$self->{ua} = $ua;
 	bless ($self, $class);
