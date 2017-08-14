@@ -281,6 +281,7 @@ use Digest::MD5 qw(md5_hex);
 use List::Util qw(min max);
 use Data::Dumper;
 use XML::Simple;
+use IO::Socket::SSL;
 use Carp;
 our $_____hold_it; # "graceful" abort for endless recursive calls. 
 our $AUTOLOAD;
@@ -323,8 +324,7 @@ sub new {
 	);
 		#$ua->show_progress(1);
 		$ua->timeout($httpTimeout);
-		#$ua->ssl_opts(SSL_verify_mode => 'SSL_VERIFY_NONE');
-		$ua->ssl_opts(SSL_verify_mode => 'SSL_VERIFY_PEER');
+		$ua->ssl_opts(SSL_verify_mode => SSL_VERIFY_PEER);
 		$ua->agent('lfm.pl/0.0.2');
 	$self->{ua} = $ua;
 	bless ($self, $class);
@@ -568,9 +568,11 @@ sub user_getplaylists { # elsif ($method eq "user.getplaylists") {
 	elsif ($order =~ m/^(tracks?|size|length|len|songs?)$/){
 		$sort_sub = \&{ Whatever::sortPlaylistByTrack } 
 	}
-	my $limit = scalar keys $idlist;
+	#my $limit = scalar keys $idlist;
+	my $limit = 20;
 	   $limit = $self->{options}->{limit} unless not defined $limit ;
-	   $limit = min(scalar keys $idlist, $limit);
+	   #$limit = min(scalar keys $idlist, $limit);
+	print Dumper($limit);
 	my @sorted = $sort_sub->($lists, $self->{options}->{reverse});
 	foreach (my $i=0; $i<$limit; $i++ ) { 
 		my $id = $sorted[$i];
@@ -915,29 +917,6 @@ package Whatever;
 sub min (@) { reduce { $a < $b ? $a : $b } @_ }
 sub max (@) { reduce { $a > $b ? $a : $b } @_ }
 
-# # oldcall
-# sub call_api20{
-# 	my %opt_toptags = (
-# 		artist		=> $OPT{artist},
-# 		album		=> $OPT{album},
-# 		track		=> $OPT{track},
-# 	);
-# 
-# 	my $method;
-# 	my %servargs;
-# 	my $call = $servargs{method};
-# 
-# 
-# 		# } elsif ($call eq  "track.addtags") { $servargs{tags}	= $OPT{tag_track};
-# 		# } elsif ($call eq "artist.removetag") { $servargs{tag}	= $OPT{tag_artist};
-# 		# } elsif ($call eq  "album.removetag") { $servargs{tag}	= $OPT{tag_album};
-# 		# } elsif ($call eq  "track.removetag") { $servargs{tag}	= $OPT{tag_track}; 
-# 		# } else {
-# 		# 	printError('Not Implemented', (caller(0))[3].": Routine not defined for $OPT{api_method}", $exit_bad); 
-# 		# 	exit 1;
-# 		# }
-# 	my $response = getResponse(\%servargs, $terminal_encoding);
-# }
 
 #
 # Helpers 
